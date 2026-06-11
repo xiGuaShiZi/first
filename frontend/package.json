@@ -1,0 +1,20 @@
+{
+  "name": "enterprise-website-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.6",
+    "axios": "^1.15.2",
+    "dompurify": "^3.4.1",
+    "element-plus": "^2.13.7",
+    "vite": "^8.0.10",
+    "vue": "^3.5.33",
+    "vue-router": "^5.0.6"
+  }
+}
