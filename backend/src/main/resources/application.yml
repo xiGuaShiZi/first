@@ -10,8 +10,6 @@ logging:
     org.springframework.web.servlet.resource.ResourceHandlerUtils: ERROR
 
 spring:
-  autoconfigure:
-    exclude:
   application:
     name: campus-trade-platform
   datasource:
