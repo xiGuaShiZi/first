@@ -12,8 +12,6 @@ logging:
 spring:
   autoconfigure:
     exclude:
-      # 排除 Spring Security 默认的 UserDetailsService 自动配置，避免生成随机密码警告
-      - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
   application:
     name: campus-trade-platform
   datasource:
@@ -48,7 +46,7 @@ spring:
       max-request-size: 55MB
 
 app:
-  upload-dir: ${UPLOAD_DIR:backend/uploads}
+  upload-dir: ${UPLOAD_DIR:uploads}
   public-url-prefix: ${PUBLIC_UPLOAD_PREFIX:/uploads/}
   initial-admin-password: ${ADMIN_INITIAL_PASSWORD:123456}
   cors:
