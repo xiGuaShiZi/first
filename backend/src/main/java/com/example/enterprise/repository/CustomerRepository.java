@@ -2,13 +2,14 @@ package com.example.enterprise.repository;
 
 import com.example.enterprise.entity.Customer;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
 import java.util.Optional;
 
 /**
  * 客户数据访问接口
  */
-public interface CustomerRepository extends JpaRepository<Customer, Long> {
+public interface CustomerRepository extends JpaRepository<Customer, Long>, JpaSpecificationExecutor<Customer> {
     /** 根据用户名查找客户 */
     Optional<Customer> findByUsername(String username);
 

@@ -1154,18 +1154,54 @@ public class ContentService {
     }
 
     /**
-     * 分页查询客户列表（支持按审核状态筛选）
+     * 分页查询客户列表（支持按审核状态筛选和关键词搜索）
      * @param auditStatus 审核状态筛选，为null时查询全部
+     * @param keyword 关键词（按用户名、手机号、邮箱模糊搜索）
      * @param page 页码
      * @param size 每页数量
      * @return 分页客户结果
      */
-    public org.springframework.data.domain.Page<com.example.enterprise.entity.Customer> listCustomers(Integer auditStatus, int page, int size) {
+    public org.springframework.data.domain.Page<com.example.enterprise.entity.Customer> listCustomers(Integer auditStatus, String keyword, int page, int size) {
         Pageable pageable = PageUtil.of(page, size);
-        if (auditStatus == null) {
-            return (org.springframework.data.domain.Page<com.example.enterprise.entity.Customer>) ((org.springframework.data.jpa.repository.JpaRepository) customerRepository).findAll(pageable);
+        Specification<com.example.enterprise.entity.Customer> spec = (root, query, builder) -> {
+            List<jakarta.persistence.criteria.Predicate> predicates = new ArrayList<>();
+            if (auditStatus != null) {
+                predicates.add(builder.equal(root.get("auditStatus"), auditStatus));
+            }
+            if (StringUtils.hasText(keyword)) {
+                String like = "%" + keyword.trim() + "%";
+                predicates.add(builder.or(
+                        builder.like(builder.lower(root.get("username")), like.toLowerCase()),
+                        builder.like(root.get("phone"), like),
+                        builder.like(builder.lower(root.get("email")), like.toLowerCase())
+                ));
+            }
+            return builder.and(predicates.toArray(jakarta.persistence.criteria.Predicate[]::new));
+        };
+        return customerRepository.findAll(spec, pageable);
+    }
+
+    /**
+     * 管理员更新客户信息（支持启用/禁用状态设置）
+     * @param id 客户ID
+     * @param status 状态：1-启用，0-禁用
+     * @return 更新后的客户实体
+     */
+    @Transactional
+    public com.example.enterprise.entity.Customer updateCustomer(Long id, Integer status) {
+        com.example.enterprise.entity.Customer customer = customerRepository.findById(id)
+                .orElseThrow(() -> new BusinessException("客户不存在"));
+        if (status != null) {
+            if (status != 0 && status != 1) {
+                throw new BusinessException("状态值只能为0或1");
+            }
+            customer.setStatus(status);
         }
-        return customerRepository.findByAuditStatus(auditStatus, pageable);
+        customer.setUpdateTime(LocalDateTime.now());
+        com.example.enterprise.entity.Customer saved = customerRepository.save(customer);
+        // 状态变更，清除客户实体缓存
+        cacheService.evictCustomer(id);
+        return saved;
     }
 
     /** 分页大小标准化，限制在1-100之间 */

@@ -1,5 +1,6 @@
 package com.example.enterprise.service;
 
+import com.example.enterprise.dto.ServiceFeeVO;
 import com.example.enterprise.entity.Merchant;
 import com.example.enterprise.entity.MerchantWallet;
 import com.example.enterprise.entity.Product;
@@ -16,6 +17,7 @@ import com.example.enterprise.repository.WalletTransactionRepository;
 import com.example.enterprise.repository.MerchantLevelAuditRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -29,6 +31,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -211,28 +215,46 @@ public class MerchantWalletService {
         serviceFeeRepository.save(serviceFee);
 
         // 更新钱包：从中间账户待结算金额转到可用余额
+        // 先将全额转入可用余额，再显式扣除平台服务费
         BigDecimal balanceBefore = wallet.getAvailableBalance();
+        BigDecimal balanceAfterIncome = balanceBefore.add(orderAmount);
+        BigDecimal balanceAfterFee = balanceAfterIncome.subtract(platformFee);
+
         wallet.setPendingBalance(wallet.getPendingBalance().subtract(orderAmount).max(BigDecimal.ZERO));
         wallet.setFrozenBalance(wallet.getFrozenBalance().subtract(orderAmount).max(BigDecimal.ZERO));
-        wallet.setAvailableBalance(wallet.getAvailableBalance().add(merchantIncome));
-        wallet.setTotalIncome(wallet.getTotalIncome().add(merchantIncome));
+        wallet.setAvailableBalance(balanceAfterFee);
+        wallet.setTotalIncome(wallet.getTotalIncome().add(orderAmount));
+        wallet.setTotalExpense(wallet.getTotalExpense().add(platformFee));
         wallet.setUpdateTime(LocalDateTime.now());
         walletRepository.save(wallet);
         // 钱包变更，清除缓存
         cacheService.evictMerchantWallet(merchantId);
 
-        // 记录交易流水
-        WalletTransaction transaction = new WalletTransaction();
-        transaction.setMerchantId(merchantId);
-        transaction.setTransactionType(isAutoConfirm ? "AUTO_CONFIRM" : "ORDER_INCOME");
-        transaction.setOrderId(orderId);
-        transaction.setOrderNo(order.getOrderNo());
-        transaction.setAmount(merchantIncome);
-        transaction.setBalanceBefore(balanceBefore);
-        transaction.setBalanceAfter(wallet.getAvailableBalance());
-        transaction.setRemark(isAutoConfirm ? "系统自动确认收货" : "买家确认收货");
-        transaction.setCreateTime(LocalDateTime.now());
-        transactionRepository.save(transaction);
+        // 记录收入流水
+        WalletTransaction incomeTx = new WalletTransaction();
+        incomeTx.setMerchantId(merchantId);
+        incomeTx.setTransactionType(isAutoConfirm ? "AUTO_CONFIRM" : "ORDER_INCOME");
+        incomeTx.setOrderId(orderId);
+        incomeTx.setOrderNo(order.getOrderNo());
+        incomeTx.setAmount(orderAmount);
+        incomeTx.setBalanceBefore(balanceBefore);
+        incomeTx.setBalanceAfter(balanceAfterIncome);
+        incomeTx.setRemark(isAutoConfirm ? "系统自动确认收货" : "买家确认收货");
+        incomeTx.setCreateTime(LocalDateTime.now());
+        transactionRepository.save(incomeTx);
+
+        // 记录服务费扣减流水
+        WalletTransaction feeTx = new WalletTransaction();
+        feeTx.setMerchantId(merchantId);
+        feeTx.setTransactionType("PLATFORM_FEE");
+        feeTx.setOrderId(orderId);
+        feeTx.setOrderNo(order.getOrderNo());
+        feeTx.setAmount(platformFee.negate());
+        feeTx.setBalanceBefore(balanceAfterIncome);
+        feeTx.setBalanceAfter(balanceAfterFee);
+        feeTx.setRemark("平台服务费");
+        feeTx.setCreateTime(LocalDateTime.now());
+        transactionRepository.save(feeTx);
 
         // 更新订单结算状态
         order.setPlatformFee(platformFee);
@@ -329,14 +351,74 @@ public class MerchantWalletService {
     }
 
     /**
-     * 分页查询平台服务费记录（管理员用）
+     * 分页查询平台服务费记录（管理员用），附带商家店铺名称
      * @param page 页码
      * @param size 每页数量
-     * @return 分页服务费记录
+     * @return 分页服务费展示VO
      */
-    public Page<ServiceFee> listServiceFees(int page, int size) {
+    public Page<ServiceFeeVO> listServiceFees(int page, int size) {
         Pageable pageable = PageRequest.of(Math.max(page - 1, 0), size, Sort.by(Sort.Direction.DESC, "createTime"));
-        return serviceFeeRepository.findAll(pageable);
+        Page<ServiceFee> feePage = serviceFeeRepository.findAll(pageable);
+
+        if (feePage.isEmpty()) {
+            return Page.empty();
+        }
+
+        // 批量查询商家信息
+        Set<Long> merchantIds = feePage.getContent().stream()
+                .map(ServiceFee::getMerchantId)
+                .collect(Collectors.toSet());
+        List<Merchant> merchants = merchantRepository.findAllById(merchantIds);
+        Map<Long, Merchant> merchantMap = merchants.stream()
+                .collect(Collectors.toMap(Merchant::getId, m -> m, (a, b) -> a));
+
+        // 构建 VO
+        List<ServiceFeeVO> voList = feePage.getContent().stream().map(fee -> {
+            ServiceFeeVO vo = new ServiceFeeVO();
+            vo.setId(fee.getId());
+            vo.setMerchantId(fee.getMerchantId());
+            vo.setOrderId(fee.getOrderId());
+            vo.setOrderNo(fee.getOrderNo());
+            vo.setOrderAmount(fee.getOrderAmount());
+            // 若 merchantLevel 为 null，则从 feeRate 反推交易时的商家等级
+            Integer level = fee.getMerchantLevel();
+            if (level == null || level == 0) {
+                level = deriveLevelFromRate(fee.getFeeRate());
+            }
+            vo.setMerchantLevel(level);
+            vo.setFeeRate(fee.getFeeRate());
+            vo.setFeeAmount(fee.getFeeAmount());
+            vo.setRemark(fee.getRemark());
+            vo.setCreateTime(fee.getCreateTime());
+
+            // 填充商家信息
+            Merchant merchant = merchantMap.get(fee.getMerchantId());
+            if (merchant != null) {
+                vo.setShopName(merchant.getShopName());
+                vo.setRealName(merchant.getRealName());
+            }
+            return vo;
+        }).collect(Collectors.toList());
+
+        return new PageImpl<>(voList, pageable, feePage.getTotalElements());
+    }
+
+    /**
+     * 从费率反推交易时的商家等级
+     * @param feeRate 费率
+     * @return 商家等级（0-5），0表示无对应等级
+     */
+    private Integer deriveLevelFromRate(BigDecimal feeRate) {
+        if (feeRate == null) return 0;
+        // 精确匹配到 FEE_RATES 中的已知费率
+        for (Map.Entry<Integer, BigDecimal> entry : FEE_RATES.entrySet()) {
+            if (feeRate.compareTo(entry.getValue()) == 0) {
+                return entry.getKey();
+            }
+        }
+        // 费率为 0 对应 0 级
+        if (feeRate.compareTo(BigDecimal.ZERO) == 0) return 0;
+        return 0;
     }
 
     /**

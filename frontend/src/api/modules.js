@@ -63,6 +63,7 @@ export const adminApi = {
   setMerchantLevel: (id, data) => request.put(`/admin/merchants/${id}/level`, data),
   customers: (params) => request.get('/admin/customers', { params }),
   auditCustomer: (id, data) => request.put(`/admin/customers/${id}/audit`, data),
+  updateCustomer: (id, data) => request.put(`/admin/customers/${id}`, data),
   serviceFees: (params) => request.get('/admin/service-fees', { params }),
   merchantLevelAudits: (params) => request.get('/admin/merchant-level-audits', { params }),
   feeRates: () => request.get('/admin/fee-rates')

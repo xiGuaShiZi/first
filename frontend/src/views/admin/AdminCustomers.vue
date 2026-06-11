@@ -3,13 +3,17 @@
     <el-card>
       <template #header>
         <div class="card-header">
-          <h2>客户审核管理</h2>
-          <el-select v-model="auditStatus" placeholder="审核状态" @change="loadData" style="width: 200px">
-            <el-option label="全部" :value="null" />
-            <el-option label="待审核" :value="0" />
-            <el-option label="已通过" :value="1" />
-            <el-option label="已拒绝" :value="2" />
-          </el-select>
+          <h2>客户管理</h2>
+          <div style="display:flex; gap:12px; align-items:center">
+            <el-input v-model="keyword" placeholder="搜索用户名/手机号/邮箱" clearable style="width:260px" @clear="loadData"
+              @keyup.enter="loadData" />
+            <el-select v-model="auditStatus" placeholder="审核状态" @change="loadData" style="width: 140px">
+              <el-option label="全部" :value="null" />
+              <el-option label="待审核" :value="0" />
+              <el-option label="已通过" :value="1" />
+              <el-option label="已拒绝" :value="2" />
+            </el-select>
+          </div>
         </div>
       </template>
 
@@ -24,6 +28,13 @@
           </template>
         </el-table-column>
         <el-table-column prop="points" label="积分" width="100" />
+        <el-table-column prop="status" label="账号状态" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 1 ? 'success' : 'danger'">
+              {{ row.status === 1 ? '正常' : '已禁用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="auditStatus" label="审核状态" width="120">
           <template #default="{ row }">
             <el-tag v-if="row.auditStatus === 0" type="warning">待审核</el-tag>
@@ -33,22 +44,21 @@
         </el-table-column>
         <el-table-column prop="auditRemark" label="审核备注" min-width="200" />
         <el-table-column prop="auditTime" label="审核时间" width="180" />
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="row.auditStatus === 0" type="primary" size="small" @click="showAuditDialog(row)">审核</el-button>
+            <el-button v-if="row.auditStatus === 0" type="primary" size="small"
+              @click="showAuditDialog(row)">审核</el-button>
+            <el-button type="success" size="small" @click="showRechargeDialog(row)">充值</el-button>
+            <el-button :type="row.status === 1 ? 'warning' : 'info'" size="small" @click="toggleStatus(row)">
+              {{ row.status === 1 ? '禁用' : '启用' }}
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
 
-      <el-pagination
-        v-model:current-page="currentPage"
-        v-model:page-size="pageSize"
-        :total="total"
-        @current-change="loadData"
-        @size-change="loadData"
-        layout="total, sizes, prev, pager, next"
-        style="margin-top: 20px; justify-content: flex-end"
-      />
+      <el-pagination v-model:current-page="currentPage" v-model:page-size="pageSize" :total="total"
+        @current-change="loadData" @size-change="loadData" layout="total, sizes, prev, pager, next"
+        style="margin-top: 20px; justify-content: flex-end" />
     </el-card>
 
     <el-dialog v-model="auditDialogVisible" title="审核客户" width="500px">
@@ -70,12 +80,26 @@
         <el-button type="primary" @click="submitAudit" :loading="submitting">提交</el-button>
       </template>
     </el-dialog>
+    <!-- ===== 充值弹窗 ===== -->
+    <el-dialog v-model="rechargeDialogVisible" title="客户充值" width="420px">
+      <el-form label-width="100px">
+        <el-form-item label="用户名">{{ rechargeCustomer?.username }}</el-form-item>
+        <el-form-item label="当前余额">¥{{ (rechargeCustomer?.balance || 0).toFixed(2) }}</el-form-item>
+        <el-form-item label="充值金额">
+          <el-input-number v-model="rechargeAmount" :min="0.01" :precision="2" :step="10" style="width:200px" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="rechargeDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitRecharge" :loading="recharging">确认充值</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { inject, ref, reactive, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { adminApi } from '../../api/modules'
 
 const refreshPendingCounts = inject('refreshPendingCounts')
@@ -83,6 +107,7 @@ const refreshPendingCounts = inject('refreshPendingCounts')
 const loading = ref(false)
 const customers = ref([])
 const auditStatus = ref(null)
+const keyword = ref('')                          // ← 新增
 const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
@@ -92,10 +117,16 @@ const currentCustomer = ref(null)
 const submitting = ref(false)
 const auditForm = reactive({ auditStatus: 1, auditRemark: '' })
 
+// ===== 充值弹窗相关变量 =====
+const rechargeDialogVisible = ref(false)
+const rechargeCustomer = ref(null)
+const rechargeAmount = ref(10)
+const recharging = ref(false)
+
 const loadData = async () => {
   loading.value = true
   try {
-    const params = { page: currentPage.value, size: pageSize.value }
+    const params = { page: currentPage.value, size: pageSize.value, keyword: keyword.value }
     if (auditStatus.value !== null) params.auditStatus = auditStatus.value
     const res = await adminApi.customers(params)
     customers.value = res.data.content
@@ -124,12 +155,62 @@ const submitAudit = async () => {
   } finally { submitting.value = false }
 }
 
+// ===== 切换客户启用/禁用 =====
+const toggleStatus = async (customer) => {
+  const newStatus = customer.status === 1 ? 0 : 1
+  const actionText = newStatus === 1 ? '启用' : '禁用'
+  try {
+    await ElMessageBox.confirm(`确定要${actionText}用户「${customer.username}」吗？`, '提示')
+    await adminApi.updateCustomer(customer.id, { status: newStatus })
+    ElMessage.success(`${actionText}成功`)
+    loadData()
+  } catch {
+    // 取消或失败均静默处理
+  }
+}
+
+// ===== 打开充值弹窗 =====
+const showRechargeDialog = (customer) => {
+  rechargeCustomer.value = customer
+  rechargeAmount.value = 10
+  rechargeDialogVisible.value = true
+}
+
+// ===== 提交充值 =====
+const submitRecharge = async () => {
+  if (!rechargeAmount.value || rechargeAmount.value <= 0) {
+    ElMessage.warning('请输入大于0的金额')
+    return
+  }
+  recharging.value = true
+  try {
+    await adminApi.rechargeCustomer(rechargeCustomer.value.id, rechargeAmount.value)
+    ElMessage.success(`充值成功，已为「${rechargeCustomer.value.username}」充值 ¥${rechargeAmount.value.toFixed(2)}`)
+    rechargeDialogVisible.value = false
+    loadData()
+  } catch (err) {
+    ElMessage.error(err?.response?.data?.message || '充值失败')
+  } finally {
+    recharging.value = false
+  }
+}
+
 onMounted(() => { loadData() })
 </script>
 
 <style scoped>
-.admin-customers { padding: 20px }
-.card-header { display:flex; justify-content:space-between; align-items:center }
-.card-header h2{ margin:0; font-size:20px }
-</style>
+.admin-customers {
+  padding: 20px
+}
 
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center
+}
+
+.card-header h2 {
+  margin: 0;
+  font-size: 20px
+}
+</style>

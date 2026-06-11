@@ -28,7 +28,7 @@
         <span v-if="pendingCounts.merchantPendingTotal" class="badge badge-red">{{ pendingCounts.merchantPendingTotal }}</span>
       </router-link>
       <router-link to="/admin/customers">
-        客户审核
+        客户管理
         <span v-if="pendingCounts.customerPendingTotal" class="badge badge-red">{{ pendingCounts.customerPendingTotal }}</span>
       </router-link>
       <router-link to="/admin/service-fees">服务费管理</router-link>

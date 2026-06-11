@@ -225,12 +225,13 @@ public class AdminController {
         return Result.success(contentService.listMerchants(auditStatus, page, size));
     }
 
-    /** 分页查询客户列表（支持按审核状态筛选） */
+    /** 分页查询客户列表（客户管理，支持按审核状态和关键词搜索） */
     @GetMapping("/customers")
     public Result<org.springframework.data.domain.Page<com.example.enterprise.entity.Customer>> customers(@RequestParam(required = false) Integer auditStatus,
+                                                                                                             @RequestParam(defaultValue = "") String keyword,
                                                                                                              @RequestParam(defaultValue = "1") int page,
                                                                                                              @RequestParam(defaultValue = "10") int size) {
-        return Result.success(contentService.listCustomers(auditStatus, page, size));
+        return Result.success(contentService.listCustomers(auditStatus, keyword, page, size));
     }
 
     /** 审核商家注册申请 */
@@ -243,6 +244,14 @@ public class AdminController {
     @PutMapping("/customers/{id}/audit")
     public Result<com.example.enterprise.entity.Customer> auditCustomer(@PathVariable Long id, @Valid @RequestBody com.example.enterprise.dto.MerchantAuditDTO dto) {
         return Result.success(authService.auditCustomer(id, dto.getAuditStatus(), dto.getAuditRemark()));
+    }
+
+    /** 更新客户信息（启用/禁用等） */
+    @PutMapping("/customers/{id}")
+    public Result<com.example.enterprise.entity.Customer> updateCustomer(@PathVariable Long id,
+                                                                           @RequestBody java.util.Map<String, Object> body) {
+        Integer status = body.get("status") != null ? Integer.valueOf(body.get("status").toString()) : null;
+        return Result.success(contentService.updateCustomer(id, status));
     }
 
     /** 设置商家等级（1-5级，等级越高平台交易费率越高），记录操作人员审计 */
@@ -267,10 +276,10 @@ public class AdminController {
         return Result.success(merchantLevelAuditRepository.findByMerchantId(merchantId, pageable));
     }
 
-    /** 分页查询平台服务费记录 */
+    /** 分页查询平台服务费记录（含商家名称等详情） */
     @GetMapping("/service-fees")
-    public Result<Page<ServiceFee>> serviceFees(@RequestParam(defaultValue = "1") int page,
-                                                @RequestParam(defaultValue = "10") int size) {
+    public Result<Page<com.example.enterprise.dto.ServiceFeeVO>> serviceFees(@RequestParam(defaultValue = "1") int page,
+                                                                                @RequestParam(defaultValue = "10") int size) {
         return Result.success(walletService.listServiceFees(page, size));
     }
 

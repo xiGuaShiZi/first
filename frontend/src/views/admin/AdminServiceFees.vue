@@ -28,16 +28,20 @@
       <h3 style="margin-bottom: 12px; font-size: 16px;">服务费记录</h3>
       <el-table :data="serviceFees" v-loading="loading" stripe style="width: 100%">
         <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="merchantId" label="商家ID" width="100" />
+        <el-table-column prop="shopName" label="商家" width="150">
+          <template #default="{ row }">
+            <span :title="row.realName">{{ row.shopName || '商家#' + row.merchantId }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="orderNo" label="订单编号" width="200" />
         <el-table-column prop="orderAmount" label="订单金额" width="120">
           <template #default="{ row }">
             ¥{{ Number(row.orderAmount).toFixed(2) }}
           </template>
         </el-table-column>
-          <el-table-column prop="merchantLevel" label="商家等级" width="120">
+          <el-table-column label="商家等级" width="150">
            <template #default="{ row }">
-             {{ row.merchantLevel ?? '-' }} 级
+             <el-rate :model-value="getLevel(row)" disabled />
            </template>
          </el-table-column>
             <el-table-column prop="feeRate" label="费率" width="100">
@@ -150,7 +154,18 @@ const parseRate = (v) => {
   }
   return 0
 }
-
+// 获取商家等级：优先使用 merchantLevel，为 null/0 时从 feeRate 反推
+const getLevel = (row) => {
+  if (row.merchantLevel && row.merchantLevel > 0) return row.merchantLevel
+  const rate = parseRate(row?.feeRate)
+  // 数值匹配（带容差，避免浮点精度问题）
+  if (Math.abs(rate - 0.001) < 0.0001) return 1
+  if (Math.abs(rate - 0.002) < 0.0001) return 2
+  if (Math.abs(rate - 0.005) < 0.0001) return 3
+  if (Math.abs(rate - 0.0075) < 0.0001) return 4
+  if (Math.abs(rate - 0.01) < 0.0001) return 5
+  return 0
+}
 // Compute a sensible rate for a service-fee row: prefer explicit row.feeRate,
 // otherwise fall back to feeAmount / orderAmount when available.
 const getRowRate = (row) => {
