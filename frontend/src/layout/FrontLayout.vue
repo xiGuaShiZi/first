@@ -8,10 +8,11 @@
         <router-link to="/product">闲置物品</router-link>
         <router-link to="/news">校园贴士</router-link>
         <router-link to="/contact">交易咨询</router-link>
-        <router-link v-if="!loggedIn && !adminLoggedIn" to="/user-login">登录</router-link>
+        <router-link v-if="!loggedIn && !adminLoggedIn && !merchantLoggedIn" to="/user-login">登录</router-link>
         <router-link v-if="loggedIn" to="/cart">交易清单<span v-if="cartCount" class="cart-badge">{{ cartCount
         }}</span></router-link>
         <router-link v-if="loggedIn" to="/orders">我的交易</router-link>
+        <router-link v-if="loggedIn" to="/bargain-offers">我的议价</router-link>
         
         <el-dropdown v-if="loggedIn" trigger="click" @command="handleAccountCommand">
           <button class="account-trigger" type="button">
@@ -36,7 +37,9 @@
           <template #dropdown>
             <el-dropdown-menu>
               <el-dropdown-item command="products">商品管理</el-dropdown-item>
-              <el-dropdown-item command="publish">发布商品</el-dropdown-item>
+              <el-dropdown-item command="orders">订单管理</el-dropdown-item>
+              <el-dropdown-item command="buyer-reviews">我的评价</el-dropdown-item>
+              <el-dropdown-item command="bargain-offers">议价管理</el-dropdown-item>
               <el-dropdown-item command="shop">店铺设置</el-dropdown-item>
               <el-dropdown-item command="wallet">我的钱包</el-dropdown-item>
               <el-dropdown-item command="password">修改密码</el-dropdown-item>
@@ -277,7 +280,9 @@ const handleAccountCommand = async (command) => {
 
 const handleMerchantCommand = async (command) => {
   if (command === 'products') return router.push('/merchant-products')
-  if (command === 'publish') return router.push('/merchant-publish')
+  if (command === 'orders') return router.push('/merchant-orders')
+  if (command === 'buyer-reviews') return router.push('/merchant-buyer-reviews')
+  if (command === 'bargain-offers') return router.push('/merchant-bargain-offers')
   if (command === 'shop') return router.push('/merchant-shop-settings')
   if (command === 'wallet') return router.push('/merchant-wallet')
   if (command === 'password') return openPasswordDialog('MERCHANT')

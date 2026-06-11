@@ -1,134 +1,123 @@
 <template>
-  <div class="merchant-layout">
-    <el-container>
-      <el-header class="merchant-header">
-        <div class="header-content">
-          <h1 class="logo">商家中心</h1>
-          <el-menu mode="horizontal" :default-active="activeMenu" class="nav-menu" router>
-            <el-menu-item index="/merchant-products">商品管理</el-menu-item>
-            <el-menu-item index="/merchant-shop-settings">店铺设置</el-menu-item>
-          </el-menu>
-          <div class="header-actions">
-            <el-dropdown @command="handleCommand">
-                <span class="user-info">
-                  <span class="username">{{ username }}</span>
-                </span>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="profile">个人资料</el-dropdown-item>
-                  <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
+  <section class="shop-settings">
+    <div class="toolbar">
+      <h1>店铺设置</h1>
+    </div>
+
+    <el-card v-loading="loading">
+      <el-form label-width="100px" :model="form" class="settings-form">
+        <el-form-item label="店铺名称">
+          <el-input v-model="form.shopName" maxlength="100" show-word-limit placeholder="请输入店铺名称" />
+        </el-form-item>
+        <el-form-item label="店铺描述">
+          <el-input v-model="form.shopDescription" type="textarea" :rows="3" maxlength="500" show-word-limit placeholder="请输入店铺描述" />
+        </el-form-item>
+        <el-form-item label="店铺Logo">
+          <div class="logo-area">
+            <el-avatar v-if="logoUrl" :size="80" :src="logoUrl" shape="square" />
+            <el-upload
+              :show-file-list="false"
+              :before-upload="beforeUpload"
+              :http-request="uploadLogo"
+              accept="image/*"
+            >
+              <el-button size="small">{{ logoUrl ? '更换Logo' : '上传Logo' }}</el-button>
+            </el-upload>
+            <el-button v-if="logoUrl" size="small" type="danger" plain @click="form.shopLogo = ''">移除</el-button>
           </div>
-        </div>
-      </el-header>
-      <el-main class="merchant-main">
-        <router-view />
-      </el-main>
-    </el-container>
-  </div>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :loading="saving" @click="save">保存设置</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+  </section>
 </template>
 
 <script setup>
-import { computed } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { merchantApi } from '../../api/modules'
 
-const router = useRouter()
-const route = useRoute()
+const form = ref({ shopName: '', shopDescription: '', shopLogo: '' })
+const loading = ref(false)
+const saving = ref(false)
 
-const activeMenu = computed(() => route.path)
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || 'http://localhost:8080'
 
-const username = computed(() => {
-  const merchantInfo = localStorage.getItem('merchant_info')
-  if (merchantInfo) {
-    try {
-      const info = JSON.parse(merchantInfo)
-      return info.username || info.shopName || localStorage.getItem('merchant_name') || '商家'
-    } catch {
-      return localStorage.getItem('merchant_name') || '商家'
-    }
-  }
-  return localStorage.getItem('merchant_name') || '商家'
+const logoUrl = computed(() => {
+  const v = form.value.shopLogo
+  if (!v) return ''
+  if (v.startsWith('http')) return v
+  return `${API_ORIGIN.replace(/\/+$/, '')}/${v.replace(/^\/+/, '')}`
 })
 
-const handleCommand = async (command) => {
-  if (command === 'logout') {
-      try {
-      await merchantApi.logout()
-    } finally {
-      localStorage.removeItem('merchant_token')
-      localStorage.removeItem('merchant_info')
-      ElMessage.success('已退出登录')
-      router.push('/user-login')
-    }
-  } else if (command === 'profile') {
-    router.push('/merchant-shop-settings')
+const load = async () => {
+  loading.value = true
+  try {
+    const res = await merchantApi.getShopInfo()
+    const data = res.data || res
+    form.value = { shopName: data.shopName || '', shopDescription: data.shopDescription || '', shopLogo: data.shopLogo || '' }
+  } catch {
+    ElMessage.error('加载店铺信息失败')
+  } finally {
+    loading.value = false
   }
 }
+
+const beforeUpload = (file) => {
+  const isImage = file.type.startsWith('image/')
+  if (!isImage) ElMessage.error('请上传图片文件')
+  return isImage
+}
+
+const uploadLogo = async ({ file }) => {
+  try {
+    const res = await merchantApi.upload(file)
+    const url = res.data || res
+    form.value.shopLogo = typeof url === 'string' ? url : url.url || ''
+    ElMessage.success('Logo已上传')
+  } catch {
+    ElMessage.error('上传失败')
+  }
+}
+
+const save = async () => {
+  saving.value = true
+  try {
+    await merchantApi.updateShopInfo(form.value)
+    ElMessage.success('店铺设置已保存')
+  } catch {
+    ElMessage.error('保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+onMounted(load)
 </script>
 
 <style scoped>
-.merchant-layout {
-  min-height: 100vh;
-  background: #f5f7fa;
+.shop-settings {
+  padding: 16px;
 }
 
-.merchant-header {
-  background: white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
-  padding: 0;
-  height: 60px;
+.toolbar {
+  margin-bottom: 16px;
 }
 
-.header-content {
-  max-width: 1200px;
-  margin: 0 auto;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  gap: 30px;
-}
-
-.logo {
+.toolbar h1 {
   margin: 0;
   font-size: 20px;
-  color: #409eff;
-  white-space: nowrap;
 }
 
-.nav-menu {
-  flex: 1;
-  border-bottom: none;
+.settings-form {
+  max-width: 560px;
 }
 
-.header-actions {
-  margin-left: auto;
-}
-
-.user-info {
+.logo-area {
   display: flex;
   align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  padding: 8px 12px;
-  border-radius: 4px;
-  transition: background 0.2s;
-}
-
-.user-info:hover {
-  background: #f5f7fa;
-}
-
-.username {
-  color: #606266;
-}
-
-.merchant-main {
-  max-width: 1200px;
-  margin: 20px auto;
-  padding: 0 20px;
+  gap: 12px;
 }
 </style>

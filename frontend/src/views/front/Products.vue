@@ -20,22 +20,30 @@
       <el-button type="primary" @click="search">搜索</el-button>
     </div>
     <div class="item-grid list-page">
-      <router-link v-for="item in list" :key="item.id" class="media-item" :to="`/product/${item.id}`">
-        <img :src="imageSrc(item.image, placeholder)" alt="" />
-        <div class="product-meta">
-          <span>{{ item.category || '闲置物品' }}</span>
-          <strong>￥{{ item.price || '0.00' }}<em v-if="item.unit">/{{ item.unit }}</em></strong>
+      <div v-for="item in list" :key="item.id" class="media-item">
+        <router-link :to="`/product/${item.id}`">
+          <img :src="imageSrc(item.image, placeholder)" alt="" />
+          <div class="product-meta">
+            <span>{{ item.category || '闲置物品' }}</span>
+            <strong>￥{{ item.price || '0.00' }}<em v-if="item.unit">/{{ item.unit }}</em></strong>
+          </div>
+          <h3>{{ item.name }}</h3>
+          <p>{{ item.description }}</p>
+          <div class="product-stat">
+            <span>库存 {{ item.stock ?? 0 }}</span>
+            <span>销量 {{ item.salesCount || 0 }}</span>
+            <span v-if="item.positiveRate !== undefined">好评率 {{ item.positiveRate }}%</span>
+            <del v-if="item.originalPrice && item.originalPrice > item.price">￥{{ item.originalPrice }}</del>
+          </div>
+          <div class="tag-row compact"><span v-for="tag in tags(item.tags)" :key="tag">{{ tag }}</span></div>
+        </router-link>
+        <div v-if="item.publisherType === 'merchant'" class="product-seller-info">
+          <router-link :to="`/shop/${item.publisherId}`" class="seller-link">
+            <el-tag size="small" type="success" effect="plain">店铺</el-tag>
+            <span>{{ item.publisherName }}</span>
+          </router-link>
         </div>
-        <h3>{{ item.name }}</h3>
-        <p>{{ item.description }}</p>
-        <div class="product-stat">
-          <span>库存 {{ item.stock ?? 0 }}</span>
-          <span>销量 {{ item.salesCount || 0 }}</span>
-          <span v-if="item.positiveRate !== undefined">好评率 {{ item.positiveRate }}%</span>
-          <del v-if="item.originalPrice && item.originalPrice > item.price">￥{{ item.originalPrice }}</del>
-        </div>
-        <div class="tag-row compact"><span v-for="tag in tags(item.tags)" :key="tag">{{ tag }}</span></div>
-      </router-link>
+      </div>
     </div>
     <el-empty v-if="loaded && !list.length" description="暂无闲置物品" />
     <el-pagination

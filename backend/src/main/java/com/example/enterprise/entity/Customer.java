@@ -50,7 +50,7 @@ public class Customer {
 
     /** 审核状态：0-待审核，1-已通过，2-已拒绝 */
     @Column(name = "audit_status")
-    private Integer auditStatus = 1;
+    private Integer auditStatus = 0;
 
     /** 审核备注 */
     @Column(name = "audit_remark", length = 255)

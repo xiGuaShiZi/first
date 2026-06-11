@@ -50,9 +50,11 @@
 -->
 
 <script setup>
-import { reactive, ref, onMounted } from 'vue'
+import { inject, reactive, ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { adminApi } from '../../api/modules'
+
+const refreshPendingCounts = inject('refreshPendingCounts')
 
 const list = ref([])
 const status = ref('')
@@ -95,6 +97,7 @@ const save = async () => {
   await adminApi.handleReturn(currentId.value, form)
   ElMessage.success('售后状态已更新')
   visible.value = false
+  refreshPendingCounts()
   load()
 }
 onMounted(load)

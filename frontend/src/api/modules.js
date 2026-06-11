@@ -1,12 +1,3 @@
-/**
- * 文件说明：modules.js
- * 作用：API 模块
- * 关键逻辑：
- * 1. 提供项目所需的核心逻辑、数据处理和业务交互。
- * 2. 与路由、UI 组件或 API 服务进行协作，完成页面或模块功能。
- * 3. 所有业务行为、异常处理和状态更新都应在此模块中保持清晰可维护。
- */
-
 import request from './request'
 
 export const authApi = {
@@ -31,7 +22,8 @@ export const publicApi = {
   productDetail: (id) => request.get(`/public/products/${id}`),
   productReviews: (id) => request.get(`/public/products/${id}/reviews`),
   submitMessage: (data) => request.post('/public/messages', data),
-  shopDetail: (merchantId, params) => request.get(`/public/shops/${merchantId}`, { params })
+  shopDetail: (merchantId, params) => request.get(`/public/shops/${merchantId}`, { params }),
+  shopReviews: (merchantId, params) => request.get(`/public/shops/${merchantId}/reviews`, { params })
 }
 
 export const adminApi = {
@@ -122,6 +114,10 @@ export const userApi = {
   returns: (params) => request.get('/user/returns', { params }),
   // 用户兑换积分接口（每100积分兑换1元，按整百兑换）
   redeemPoints: (points) => request.post('/user/points/redeem', null, { params: { points } }),
+  // 议价功能
+  createBargainOffer: (productId, offerPrice) => request.post('/user/bargain-offers', null, { params: { productId, offerPrice } }),
+  myBargainOffers: (params) => request.get('/user/bargain-offers', { params }),
+  cancelBargainOffer: (id) => request.put(`/user/bargain-offers/${id}/cancel`),
   upload: (file) => {
     const form = new FormData()
     form.append('file', file)
@@ -159,5 +155,10 @@ export const merchantApi = {
   orders: (params) => request.get('/merchant/orders', { params }),
   shipOrder: (id, logisticsNo) => request.put(`/merchant/orders/${id}/ship`, null, { params: { logisticsNo } })
   ,
-  reviewBuyer: (id, rating, content) => request.post(`/merchant/orders/${id}/review-buyer`, null, { params: { rating, content } })
+  reviewBuyer: (id, rating, content) => request.post(`/merchant/orders/${id}/review-buyer`, null, { params: { rating, content } }),
+  // 商家查看自己对买家的评价记录
+  myBuyerReviews: (params) => request.get('/merchant/buyer-reviews', { params }),
+  // 议价管理（商家）
+  bargainOffers: (params) => request.get('/merchant/bargain-offers', { params }),
+  handleBargainOffer: (id, action, reply) => request.put(`/merchant/bargain-offers/${id}/handle`, null, { params: { action, reply } })
 }

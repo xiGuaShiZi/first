@@ -151,6 +151,34 @@ public class MerchantController {
         return Result.success(commerceService.merchantReviewBuyer(user, id, rating, content));
     }
 
+    /** 分页查询商家对买家的评价记录 */
+    @GetMapping("/buyer-reviews")
+    public Result<Page<com.example.enterprise.entity.BuyerReview>> myBuyerReviews(@RequestHeader("Authorization") String authorization,
+                                                                                  @RequestParam(defaultValue = "1") int page,
+                                                                                  @RequestParam(defaultValue = "10") int size) {
+        com.example.enterprise.service.AuthService.TokenUser user = authService.current(token(authorization));
+        return Result.success(commerceService.merchantBuyerReviews(user.id(), page, size));
+    }
+
+    /** 分页查询商家收到的议价出价 */
+    @GetMapping("/bargain-offers")
+    public Result<Page<com.example.enterprise.entity.BargainOffer>> bargainOffers(@RequestHeader("Authorization") String authorization,
+                                                                                   @RequestParam(defaultValue = "1") int page,
+                                                                                   @RequestParam(defaultValue = "10") int size) {
+        com.example.enterprise.service.AuthService.TokenUser user = authService.current(token(authorization));
+        return Result.success(commerceService.merchantBargainOffers(user.id(), page, size));
+    }
+
+    /** 商家处理议价（接受或拒绝） */
+    @PutMapping("/bargain-offers/{id}/handle")
+    public Result<com.example.enterprise.entity.BargainOffer> handleBargainOffer(@RequestHeader("Authorization") String authorization,
+                                                                                  @PathVariable Long id,
+                                                                                  @RequestParam String action,
+                                                                                  @RequestParam(required = false) String reply) {
+        com.example.enterprise.service.AuthService.TokenUser user = authService.current(token(authorization));
+        return Result.success(commerceService.handleBargainOffer(user, id, action, reply));
+    }
+
     /** 商家注销登录 */
     @PostMapping("/logout")
     public Result<Void> logout(@RequestHeader("Authorization") String authorization) {

@@ -14,9 +14,6 @@
       <div class="toolbar-actions">
         <el-button type="success" @click="goToShop">查看店铺</el-button>
         <el-button type="primary" @click="openProduct()">发布新商品</el-button>
-        <el-button @click="() => router.push('/merchant-orders')">订单管理</el-button>
-        <el-button @click="goToSettings">商家信息</el-button>
-        <el-button type="danger" plain @click="logout">退出登录</el-button>
       </div>
     </div>
 
@@ -56,19 +53,21 @@
       </el-table-column>
       <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
-          <el-button size="small" @click="openProduct(row)">编辑</el-button>
-          <el-button 
-            size="small" 
-            :type="row.status === 1 ? 'warning' : 'success'"
-            :disabled="row.status !== 1 && row.auditStatus !== 1"
-            @click="toggleStatus(row)"
-          >
-            {{ row.status === 1 ? '下架' : '上架' }}
-          </el-button>
-          <span v-if="row.status !== 1 && row.auditStatus !== 1" style="display:block;color:#909399;font-size:11px;margin-top:2px;">
+          <div class="action-buttons">
+            <el-button size="small" @click="openProduct(row)">编辑</el-button>
+            <el-button 
+              size="small" 
+              :type="row.status === 1 ? 'warning' : 'success'"
+              :disabled="row.status !== 1 && row.auditStatus !== 1"
+              @click="toggleStatus(row)"
+            >
+              {{ row.status === 1 ? '下架' : '上架' }}
+            </el-button>
+            <el-button size="small" type="danger" @click="removeProduct(row.id)">删除</el-button>
+          </div>
+          <span v-if="row.status !== 1 && row.auditStatus !== 1" class="audit-hint">
             {{ row.auditStatus === 2 ? '审核被拒绝，无法上架' : '等待管理员审核后上架' }}
           </span>
-          <el-button size="small" type="danger" @click="removeProduct(row.id)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -279,22 +278,6 @@ const goToShop = () => {
   })
 }
 
-const goToSettings = () => {
-  router.push('/merchant-shop-settings')
-}
-
-const logout = async () => {
-  try {
-    await merchantApi.logout().catch(() => {})
-  } finally {
-    localStorage.removeItem('merchant_token')
-    localStorage.removeItem('merchant_name')
-    localStorage.removeItem('merchant_info')
-    ElMessage.success('已退出登录')
-    router.push('/merchant-login')
-  }
-}
-
 const openProduct = (row) => {
   editingProductId.value = row?.id || null
   Object.assign(productForm, emptyProductForm, row || {}, {
@@ -446,5 +429,19 @@ onMounted(loadProducts)
   color: #909399;
   font-size: 12px;
   margin-top: 5px;
+}
+
+.action-buttons {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+
+.audit-hint {
+  display: block;
+  color: #909399;
+  font-size: 11px;
+  margin-top: 4px;
+  white-space: nowrap;
 }
 </style>

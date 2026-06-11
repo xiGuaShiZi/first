@@ -36,13 +36,8 @@ public class OrderSettlementScheduler {
         try {
             LocalDateTime sevenDaysAgo = LocalDateTime.now().minusDays(7);
 
-            // 查询已发货超过7天且状态为等待买家确认的订单
-            List<ProductOrder> orders = orderRepository.findAll().stream()
-                    .filter(order -> "WAIT_BUYER_CONFIRM_GOODS".equals(order.getStatus()))
-                    .filter(order -> order.getPaidTime() != null)
-                    .filter(order -> order.getPaidTime().isBefore(sevenDaysAgo))
-                    .filter(order -> !"SETTLED".equals(order.getSettlementStatus()))
-                    .toList();
+            // 查询已发货超过7天且未结算的待确认订单
+            List<ProductOrder> orders = orderRepository.findPendingAutoConfirm(sevenDaysAgo);
 
             if (orders.isEmpty()) {
                 log.info("没有需要自动确认的订单");

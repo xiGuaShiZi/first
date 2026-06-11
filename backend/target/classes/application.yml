@@ -1,7 +1,19 @@
 server:
   port: 8080
 
+# 日志级别配置：抑制不必要的 INFO/WARN 日志
+logging:
+  level:
+    # RepositoryConfigurationExtensionSupport 在启动时扫描所有 JPA 仓库判定 Redis 归属，产生大量冗余 INFO 日志
+    org.springframework.data.repository.config.RepositoryConfigurationExtensionSupport: WARN
+    # ResourceHandlerUtils 的尾部斜杠追加提示为内部行为，降级为 ERROR 不显示
+    org.springframework.web.servlet.resource.ResourceHandlerUtils: ERROR
+
 spring:
+  autoconfigure:
+    exclude:
+      # 排除 Spring Security 默认的 UserDetailsService 自动配置，避免生成随机密码警告
+      - org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
   application:
     name: campus-trade-platform
   datasource:
@@ -10,6 +22,7 @@ spring:
     password: ${DB_PASSWORD:123456}
     driver-class-name: org.mariadb.jdbc.Driver
   jpa:
+    open-in-view: false
     hibernate:
       ddl-auto: ${JPA_DDL_AUTO:update}
     show-sql: false

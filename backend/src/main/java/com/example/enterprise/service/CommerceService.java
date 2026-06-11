@@ -1,5 +1,6 @@
 package com.example.enterprise.service;
 
+import com.example.enterprise.common.PageUtil;
 import com.example.enterprise.dto.CartItemVO;
 import com.example.enterprise.dto.OrderBatchCreateDTO;
 import com.example.enterprise.dto.OrderCreateDTO;
@@ -20,6 +21,7 @@ import com.example.enterprise.repository.ReturnRequestRepository;
 import com.example.enterprise.repository.ShoppingCartItemRepository;
 import com.example.enterprise.repository.CustomerAddressRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -37,6 +39,7 @@ import java.util.UUID;
  * 交易服务
  * <p>提供收藏/意向、订单、评价、交易协商等校园二手交易平台核心业务逻辑</p>
  */
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class CommerceService {
@@ -48,6 +51,8 @@ public class CommerceService {
     private final ProductReviewRepository reviewRepository;
     /** 商家对买家评价数据访问 */
     private final com.example.enterprise.repository.BuyerReviewRepository buyerReviewRepository;
+    /** 议价出价数据访问 */
+    private final com.example.enterprise.repository.BargainOfferRepository bargainOfferRepository;
     /** 交易协商申请数据访问 */
     private final ReturnRequestRepository returnRequestRepository;
     /** 收藏/意向项数据访问 */
@@ -58,6 +63,11 @@ public class CommerceService {
     private final com.example.enterprise.repository.CustomerRepository customerRepository;
     /** 商家钱包管理服务 */
     private final MerchantWalletService walletService;
+    /** 商家数据访问（用于议价时查找商家名称） */
+    private final com.example.enterprise.repository.MerchantRepository merchantRepository;
+
+    /** Redis 缓存服务 */
+    private final CacheService cacheService;
 
     /**
      * 获取用户收藏/意向清单
@@ -65,9 +75,17 @@ public class CommerceService {
      * @return 收藏/意向项VO列表
      */
     public List<CartItemVO> cartItems(AuthService.TokenUser user) {
-        return cartItemRepository.findByCustomerIdOrderByCreateTimeDescIdDesc(user.id()).stream()
+        // 优先从缓存获取
+        List<CartItemVO> cached = cacheService.getCartItems(user.id(), new com.fasterxml.jackson.core.type.TypeReference<List<CartItemVO>>() {});
+        if (cached != null) {
+            return cached;
+        }
+        List<CartItemVO> items = cartItemRepository.findByCustomerIdOrderByCreateTimeDescIdDesc(user.id()).stream()
                 .map(this::toCartItemVO)
                 .toList();
+        // 写入缓存
+        cacheService.putCartItems(user.id(), items);
+        return items;
     }
 
     /**
@@ -104,7 +122,10 @@ public class CommerceService {
         }
         item.setQuantity(quantityTotal);
         item.setUpdateTime(LocalDateTime.now());
-        return toCartItemVO(cartItemRepository.save(item));
+        CartItemVO saved = toCartItemVO(cartItemRepository.save(item));
+        // 收藏/意向清单变更，清除缓存
+        cacheService.evictCartItems(user.id());
+        return saved;
     }
 
     /**
@@ -130,7 +151,10 @@ public class CommerceService {
         item.setSelected(checkedValue);
         item.setChecked(checkedValue);
         item.setUpdateTime(LocalDateTime.now());
-        return toCartItemVO(cartItemRepository.save(item));
+        CartItemVO saved = toCartItemVO(cartItemRepository.save(item));
+        // 收藏/意向清单变更，清除缓存
+        cacheService.evictCartItems(user.id());
+        return saved;
     }
 
     /**
@@ -143,6 +167,8 @@ public class CommerceService {
         ShoppingCartItem item = cartItemRepository.findByIdAndCustomerId(id, user.id())
                 .orElseThrow(() -> new BusinessException("收藏项不存在"));
         cartItemRepository.delete(item);
+        // 收藏/意向清单变更，清除缓存
+        cacheService.evictCartItems(user.id());
     }
 
     /**
@@ -152,6 +178,8 @@ public class CommerceService {
     @Transactional
     public void clearCart(AuthService.TokenUser user) {
         cartItemRepository.deleteByCustomerId(user.id());
+        // 收藏/意向清单变更，清除缓存
+        cacheService.evictCartItems(user.id());
     }
 
     /**
@@ -184,6 +212,9 @@ public class CommerceService {
             orders.add(createOrder(user, item, mainOrderNo, index + 1));
         }
 
+        // 下单后清除收藏/意向清单缓存
+        cacheService.evictCartItems(user.id());
+
         // 奖励积分：每消费1元计1积分（取整元数）
         int pointsTotal = orders.stream()
                 .map(o -> nullToZero(o.getTotalAmount()))
@@ -197,6 +228,8 @@ public class CommerceService {
             savedCustomer.setPoints(current + pointsTotal);
             savedCustomer.setUpdateTime(LocalDateTime.now());
             customerRepository.save(savedCustomer);
+            // 积分变更，清除客户实体缓存
+            cacheService.evictCustomer(user.id());
         }
 
         return orders;
@@ -218,9 +251,12 @@ public class CommerceService {
                 .map(o -> nullToZero(o.getTotalAmount()))
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        // 扣减客户余额
-        com.example.enterprise.entity.Customer customer = customerRepository.findById(user.id())
-                .orElseThrow(() -> new BusinessException("用户不存在"));
+        // 扣减客户余额（优先从缓存获取，余额敏感使用较短TTL）
+        com.example.enterprise.entity.Customer customer = cacheService.getCustomer(user.id(), com.example.enterprise.entity.Customer.class);
+        if (customer == null) {
+            customer = customerRepository.findById(user.id())
+                    .orElseThrow(() -> new BusinessException("用户不存在"));
+        }
         if (customer.getBalance() == null) {
             customer.setBalance(BigDecimal.ZERO);
         }
@@ -230,6 +266,8 @@ public class CommerceService {
         customer.setBalance(customer.getBalance().subtract(totalAmount));
         customer.setUpdateTime(LocalDateTime.now());
         customerRepository.save(customer);
+        // 余额变更，清除客户实体缓存
+        cacheService.evictCustomer(user.id());
 
         // 将所有子订单标记为已支付，扣减库存并触发中间账户冻结
         LocalDateTime paidTime = LocalDateTime.now();
@@ -253,7 +291,7 @@ public class CommerceService {
             try {
                 walletService.freezeOrderAmount(item.getId());
             } catch (Exception e) {
-                e.printStackTrace();
+                log.error("冻结订单金额失败, orderId={}", item.getId(), e);
             }
         }
         return orders;
@@ -266,11 +304,33 @@ public class CommerceService {
         if (product.getStock() != null && product.getStock() < quantity) {
             throw new BusinessException("物品数量不足");
         }
+
+        // 议价价格：若传入已接受的议价ID，使用议价价格代替原价
+        BigDecimal unitPrice = product.getPrice() == null ? BigDecimal.ZERO : product.getPrice();
+        if (dto.getBargainOfferId() != null) {
+            com.example.enterprise.entity.BargainOffer offer = bargainOfferRepository.findById(dto.getBargainOfferId())
+                    .orElseThrow(() -> new BusinessException("议价记录不存在"));
+            if (!"ACCEPTED".equals(offer.getStatus())) {
+                throw new BusinessException("议价尚未被接受，无法使用议价价格");
+            }
+            if (!user.id().equals(offer.getBuyerId())) {
+                throw new BusinessException("议价记录与当前用户不匹配");
+            }
+            if (!product.getId().equals(offer.getProductId())) {
+                throw new BusinessException("议价记录与当前商品不匹配");
+            }
+            unitPrice = offer.getOfferPrice();
+            // 标记议价已使用，防止重复下单
+            offer.setStatus("USED");
+            offer.setHandleTime(LocalDateTime.now());
+            bargainOfferRepository.save(offer);
+        }
+
         ProductOrder order = new ProductOrder();
         order.setOrderNo("PO" + UUID.randomUUID().toString().replace("-", "").substring(0, 16).toUpperCase());
         order.setMainOrderNo(mainOrderNo);
         order.setSubOrderNo(mainOrderNo + "-" + String.format("%02d", subIndex));
-        order.setShopId(1L);
+        order.setShopId(product.getPublisherId());
         order.setShopName("校园二手交易平台");
         order.setMerchantId(product.getPublisherId());
         order.setCustomerId(user.id());
@@ -278,11 +338,11 @@ public class CommerceService {
         order.setProductId(product.getId());
         order.setSkuId(normalizeSkuId(dto.getSkuId()));
         order.setProductName(product.getName());
-        order.setPrice(product.getPrice() == null ? BigDecimal.ZERO : product.getPrice());
+        order.setPrice(unitPrice);
         order.setQuantity(quantity);
         order.setProductDiscountAmount(BigDecimal.ZERO);
         order.setOrderDiscountAmount(BigDecimal.ZERO);
-        order.setTotalAmount(order.getPrice().multiply(BigDecimal.valueOf(quantity)));
+        order.setTotalAmount(unitPrice.multiply(BigDecimal.valueOf(quantity)));
         OrderAddress orderAddress = resolveOrderAddress(user, dto);
         order.setContactPhone(orderAddress.phone());
         order.setAddress(orderAddress.fullAddress());
@@ -358,7 +418,7 @@ public class CommerceService {
                 walletService.freezeOrderAmount(item.getId());
             } catch (Exception e) {
                 // 中间账户记录失败不影响支付流程
-                e.printStackTrace();
+                log.error("冻结订单金额失败, orderId={}", item.getId(), e);
             }
         }
 
@@ -375,6 +435,8 @@ public class CommerceService {
             customer.setPoints(current + points);
             customer.setUpdateTime(LocalDateTime.now());
             customerRepository.save(customer);
+            // 积分变更，清除客户实体缓存
+            cacheService.evictCustomer(user.id());
         }
 
         return orderRepository.findById(id).orElse(order);
@@ -504,7 +566,7 @@ public class CommerceService {
             walletService.settleOrder(order.getId(), false);
         } catch (Exception e) {
             // 结算失败不影响确认收货，记录日志即可
-            e.printStackTrace();
+            log.error("订单结算失败, orderId={}", order.getId(), e);
         }
 
         return order;
@@ -652,6 +714,107 @@ public class CommerceService {
         return buyerReviewRepository.findByBuyerId(buyerId, pageable);
     }
 
+    /** 分页查询某个商家发出的买家评价（供商家查看自己对买家的评价记录） */
+    public Page<com.example.enterprise.entity.BuyerReview> merchantBuyerReviews(Long merchantId, int page, int size) {
+        Pageable pageable = page(page, size);
+        return buyerReviewRepository.findByMerchantId(merchantId, pageable);
+    }
+
+    /**
+     * 买家对允许议价的商品发起出价
+     */
+    @Transactional
+    public com.example.enterprise.entity.BargainOffer createBargainOffer(AuthService.TokenUser user, Long productId, BigDecimal offerPrice) {
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new BusinessException("商品不存在"));
+        if (!Integer.valueOf(1).equals(product.getAllowBargain())) {
+            throw new BusinessException("该商品不允许议价");
+        }
+        if (!Integer.valueOf(1).equals(product.getStatus())) {
+            throw new BusinessException("商品已下架");
+        }
+        if (offerPrice == null || offerPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("出价需大于0");
+        }
+        if (product.getPrice() != null && offerPrice.compareTo(product.getPrice()) >= 0) {
+            throw new BusinessException("出价需低于原价，可直接购买");
+        }
+        if (bargainOfferRepository.existsByBuyerIdAndProductIdAndStatus(user.id(), productId, "PENDING")) {
+            throw new BusinessException("您对该商品已有待处理的议价，请等待商家回复");
+        }
+
+        // 查找商家名称
+        String merchantName = "";
+        if (product.getPublisherId() != null) {
+            try {
+                merchantName = merchantRepository.findById(product.getPublisherId())
+                        .map(m -> m.getShopName() != null ? m.getShopName() : m.getUsername()).orElse("");
+            } catch (Exception ignored) {}
+        }
+
+        com.example.enterprise.entity.BargainOffer offer = new com.example.enterprise.entity.BargainOffer();
+        offer.setProductId(productId);
+        offer.setProductName(product.getName());
+        offer.setBuyerId(user.id());
+        offer.setBuyerName(user.username());
+        offer.setMerchantId(product.getPublisherId() != null ? product.getPublisherId() : 0L);
+        offer.setMerchantName(merchantName);
+        offer.setOriginalPrice(product.getPrice());
+        offer.setOfferPrice(offerPrice);
+        offer.setStatus("PENDING");
+        offer.setCreateTime(LocalDateTime.now());
+        return bargainOfferRepository.save(offer);
+    }
+
+    /** 分页查询买家的议价出价记录 */
+    public Page<com.example.enterprise.entity.BargainOffer> userBargainOffers(Long buyerId, int page, int size) {
+        return bargainOfferRepository.findByBuyerId(buyerId, page(page, size));
+    }
+
+    /** 分页查询商家收到的议价出价 */
+    public Page<com.example.enterprise.entity.BargainOffer> merchantBargainOffers(Long merchantId, int page, int size) {
+        return bargainOfferRepository.findByMerchantId(merchantId, page(page, size));
+    }
+
+    /** 商家处理议价（接受或拒绝） */
+    @Transactional
+    public com.example.enterprise.entity.BargainOffer handleBargainOffer(AuthService.TokenUser merchant, Long offerId, String action, String reply) {
+        com.example.enterprise.entity.BargainOffer offer = bargainOfferRepository.findById(offerId)
+                .orElseThrow(() -> new BusinessException("议价记录不存在"));
+        if (!merchant.id().equals(offer.getMerchantId())) {
+            throw new BusinessException("无权处理他人的议价");
+        }
+        if (!"PENDING".equals(offer.getStatus())) {
+            throw new BusinessException("该议价已被处理");
+        }
+        if ("ACCEPT".equalsIgnoreCase(action)) {
+            offer.setStatus("ACCEPTED");
+        } else if ("REJECT".equalsIgnoreCase(action)) {
+            offer.setStatus("REJECTED");
+        } else {
+            throw new BusinessException("操作不合法，仅支持 ACCEPT 或 REJECT");
+        }
+        offer.setReply(reply);
+        offer.setHandleTime(LocalDateTime.now());
+        return bargainOfferRepository.save(offer);
+    }
+
+    /** 买家取消议价 */
+    @Transactional
+    public com.example.enterprise.entity.BargainOffer cancelBargainOffer(AuthService.TokenUser user, Long offerId) {
+        com.example.enterprise.entity.BargainOffer offer = bargainOfferRepository.findById(offerId)
+                .orElseThrow(() -> new BusinessException("议价记录不存在"));
+        if (!user.id().equals(offer.getBuyerId())) {
+            throw new BusinessException("无权取消他人的议价");
+        }
+        if (!"PENDING".equals(offer.getStatus())) {
+            throw new BusinessException("该议价已被处理，无法取消");
+        }
+        offer.setStatus("CANCELLED");
+        offer.setHandleTime(LocalDateTime.now());
+        return bargainOfferRepository.save(offer);
+    }
+
     /**
      * 订单统计，支持按日期范围查询，返回总金额、订单数、成交数量、分类和日期维度统计
      * @param startDate 开始日期
@@ -733,7 +896,7 @@ public class CommerceService {
 
     /** 构建分页请求，页码从1开始，按创建时间倒序 */
     private Pageable page(int page, int size) {
-        return PageRequest.of(Math.max(page - 1, 0), Math.min(Math.max(size, 1), 100), Sort.by(Sort.Direction.DESC, "createTime"));
+        return PageUtil.of(page, size);
     }
 
     /** 查询可用物品（在售），不存在或已下架则抛异常 */

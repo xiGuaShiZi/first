@@ -39,8 +39,27 @@
       <div class="tag-row">
         <span v-for="tag in tags(product.tags)" :key="tag">{{ tag }}</span>
       </div>
+      <!-- 发布者/店铺信息 -->
+      <div v-if="product.publisherName" class="product-seller-info">
+        <template v-if="product.publisherType === 'merchant'">
+          <router-link :to="`/shop/${product.publisherId}`" class="seller-link">
+            <el-avatar v-if="product.publisherAvatar" :size="28" :src="imageSrc(product.publisherAvatar, '')" />
+            <el-avatar v-else :size="28" style="background:#409EFF;vertical-align:middle;">
+              {{ product.publisherName.charAt(0) }}
+            </el-avatar>
+            <span class="seller-name">{{ product.publisherName }}</span>
+            <el-tag size="small" type="success" effect="plain">店铺</el-tag>
+          </router-link>
+        </template>
+        <div v-else class="seller-customer">
+          <el-avatar :size="28" style="background:#67C23A;">{{ product.publisherName?.charAt(0) }}</el-avatar>
+          <span class="seller-name">{{ product.publisherName }}</span>
+          <el-tag size="small" type="info" effect="plain">学生发布</el-tag>
+        </div>
+      </div>
       <div class="product-actions">
         <button class="buy-button secondary" type="button" @click="addCart">加入交易清单</button>
+        <button v-if="product.allowBargain === 1" class="buy-button bargain" type="button" @click="openBargainDialog">议价</button>
         <button class="buy-button" type="button" @click="openBuyDialog">立即购买</button>
       </div>
     </div>
@@ -96,6 +115,9 @@
   </section>
 
   <el-dialog v-model="visible" title="确认交易" width="520px">
+    <div v-if="acceptedBargainPrice" style="background: #fdf6ec; padding: 12px; border-radius: 6px; margin-bottom: 16px; color: #e6a23c;">
+      ✅ 议价已通过！单价将使用议价价格：<strong>¥{{ acceptedBargainPrice }}</strong>（原价 ¥{{ product.price }}）
+    </div>
     <el-form label-position="top">
       <el-form-item label="购买数量"><el-input-number v-model="order.quantity" :min="1" /></el-form-item>
       <el-form-item label="收货地址">
@@ -108,6 +130,22 @@
     <template #footer>
       <el-button @click="visible = false">取消</el-button>
       <el-button type="primary" :loading="saving" @click="buy">提交交易</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="bargainVisible" title="议价出价" width="420px">
+    <p style="margin-bottom: 12px; color: #606266;">
+      商品原价：<strong style="color: #f56c6c;">¥{{ product.price }}</strong>
+      ，请输入您的期望价格：
+    </p>
+    <el-form>
+      <el-form-item label="我的出价">
+        <el-input-number v-model="bargainPrice" :min="0.01" :precision="2" :max="product.price ? product.price - 0.01 : undefined" style="width: 100%" />
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button @click="bargainVisible = false">取消</el-button>
+      <el-button type="primary" :loading="bargainSaving" @click="submitBargain">提交议价</el-button>
     </template>
   </el-dialog>
 </template>
@@ -137,6 +175,11 @@ const activeTab = ref('detail') // 详情页当前激活的标签页
 const activeImageIndex = ref(0) // 当前主图索引，决定放大展示哪张图片
 const order = reactive({ quantity: 1, addressId: null }) // 订单提交时的购买数量和收货地址选择
 const addresses = ref([]) // 当前用户地址列表
+const bargainOfferId = ref(route.query.bargainOfferId ? Number(route.query.bargainOfferId) : null) // 议价出价ID（从议价记录跳过来时使用）
+const acceptedBargainPrice = ref(route.query.bargainPrice ? Number(route.query.bargainPrice) : null) // 已接受的议价价格
+const bargainVisible = ref(false) // 议价弹窗显示状态
+const bargainPrice = ref(0) // 买家议价出价
+const bargainSaving = ref(false) // 议价提交按钮加载状态
 const placeholder = 'https://images.unsplash.com/photo-1515955656352-a1fa3ffcd111?auto=format&fit=crop&w=1200&q=80' // 商品图片缺失时使用的占位图
 
 const tags = (value) => value ? String(value).split(',').map(item => item.trim()).filter(Boolean) : [] // 将标签字符串拆分成数组，方便页面渲染标签
@@ -231,8 +274,13 @@ const buy = async () => {
   }
   saving.value = true // 锁定按钮，避免重复提交订单
   try {
-    await userApi.createOrder({ ...order, productId: product.value.id })
-    ElMessage.success('交易成功，可在我的交易中查看')
+    const orderData = { ...order, productId: product.value.id }
+    // 若从议价记录跳来，传入议价ID以便后端使用议价价格
+    if (bargainOfferId.value) {
+      orderData.bargainOfferId = bargainOfferId.value
+    }
+    await userApi.createOrder(orderData)
+    ElMessage.success(acceptedBargainPrice.value ? '已按议价价格下单，可在我的交易中查看' : '交易成功，可在我的交易中查看')
     visible.value = false
     router.push('/orders')
   } finally {
@@ -251,6 +299,32 @@ const addCart = async () => {
   ElMessage.success('已加入交易清单')
 }
 
+const openBargainDialog = () => {
+  if (!localStorage.getItem('user_token')) {
+    ElMessage.warning('请先登录会员账号')
+    router.push('/user-login')
+    return
+  }
+  bargainVisible.value = true
+}
+
+const submitBargain = async () => {
+  if (!bargainPrice.value || bargainPrice.value <= 0) {
+    ElMessage.warning('请输入有效的出价')
+    return
+  }
+  bargainSaving.value = true
+  try {
+    await userApi.createBargainOffer(product.value.id, bargainPrice.value)
+    ElMessage.success('议价已提交，请等待商家回复')
+    bargainVisible.value = false
+  } catch (e) {
+    // 后端会返回错误信息
+  } finally {
+    bargainSaving.value = false
+  }
+}
+
 onMounted(async () => {
   const productId = route.params.id // 当前详情页路由中的商品 ID
   const [productRes, reviewRes] = await Promise.all([
@@ -260,6 +334,8 @@ onMounted(async () => {
   product.value = productRes.data || {}
   reviews.value = reviewRes.data || []
   activeImageIndex.value = 0 // 重置主图为第一张
+  // 初始化议价默认值（原价的一半）
+  bargainPrice.value = product.value.price ? Math.round(product.value.price * 50) / 100 : 0
 })
 const getConditionText = (level) => {
   const map = {
@@ -272,3 +348,33 @@ const getConditionText = (level) => {
   return map[level] || level
 }
 </script>
+
+<style scoped>
+.product-seller-info {
+  margin: 12px 0;
+  padding: 10px 12px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border: 1px solid #ebeef5;
+}
+.seller-link,
+.seller-customer {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: inherit;
+}
+.seller-link:hover .seller-name {
+  color: #409EFF;
+}
+.seller-name {
+  font-weight: 600;
+  font-size: 15px;
+  color: #303133;
+  transition: color 0.2s;
+}
+.seller-link:hover {
+  cursor: pointer;
+}
+</style>

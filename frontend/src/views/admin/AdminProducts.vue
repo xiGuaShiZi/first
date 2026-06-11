@@ -29,10 +29,17 @@
       <el-table-column label="状态" width="110">
         <template #default="{ row }"><el-tag :type="row.status === 1 ? 'success' : 'info'">{{ row.status === 1 ? '发布' : '下线' }}</el-tag></template>
       </el-table-column>
-      <el-table-column label="操作" width="230" fixed="right">
+      <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
           <el-button @click="open(row)">编辑</el-button>
-          <el-button @click="toggle(row)">{{ row.status === 1 ? '下线' : '发布' }}</el-button>
+          <el-tooltip
+            v-if="row.auditStatus !== 1 && row.status !== 1"
+            content="该商品尚未通过审核，无法上架，请先点击审核按钮"
+            placement="top"
+          >
+            <el-button disabled>发布</el-button>
+          </el-tooltip>
+          <el-button v-else @click="toggle(row)">{{ row.status === 1 ? '下线' : '发布' }}</el-button>
           <el-button v-if="row.auditStatus === 0" type="primary" size="mini" @click="showAuditDialog(row)">审核</el-button>
           <el-button type="danger" @click="remove(row.id)">删除</el-button>
         </template>
@@ -66,7 +73,19 @@
             <el-button @click="addGalleryImage">添加详情图片</el-button>
           </div>
         </el-form-item>
-        <el-form-item label="状态"><el-switch v-model="form.status" :active-value="1" :inactive-value="0" active-text="发布" inactive-text="下线" /></el-form-item>
+        <el-form-item label="状态">
+          <el-switch
+            v-model="form.status"
+            :active-value="1"
+            :inactive-value="0"
+            active-text="发布"
+            inactive-text="下线"
+            :disabled="editingId && editingAuditStatus !== 1"
+          />
+          <span v-if="editingId && editingAuditStatus !== 1" style="color:#E6A23C;font-size:12px;margin-left:8px;">
+            该商品尚未通过审核，无法在编辑中上架，请先完成审核
+          </span>
+        </el-form-item>
         <el-form-item label="简介"><el-input v-model="form.description" type="textarea" :rows="3" /></el-form-item>
         <el-form-item label="物品详情"><el-input v-model="form.detail" type="textarea" :rows="8" placeholder="支持 HTML 图文详情，例如 <h2>物品卖点</h2><p>详细介绍</p>" /></el-form-item>
       </el-form>
@@ -97,20 +116,13 @@
   </section>
 </template>
 
-<!--
-  文件说明：AdminProducts.vue
-  作用：前端页面或组件
-  关键逻辑：
-  - 负责页面展示、业务交互和状态管理。
-  - 通过组件、API 和路由完成页面功能闭环。
-  - 保持模板、样式和脚本职责清晰，便于维护和扩展。
--->
-
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { inject, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { adminApi } from '../../api/modules'
 import ImageUpload from '../../components/ImageUpload.vue'
+
+const refreshPendingCounts = inject('refreshPendingCounts')
 
 const list = ref([])
 const total = ref(0)
@@ -121,6 +133,7 @@ const saving = ref(false)
 const page = ref(1)
 const pageSize = 10
 const editingId = ref(null)
+const editingAuditStatus = ref(1)
 const emptyForm = { sku: '', name: '', category: '', tags: '', image: '', images: [], price: 0, originalPrice: 0, stock: 0, unit: '件', salesCount: 0, weightGrams: 0, description: '', detail: '', status: 1 }
 const form = reactive({ ...emptyForm })
 const normalizeImageUrl = (value) => {
@@ -146,9 +159,14 @@ const load = async () => {
 const search = () => { page.value = 1; load() }
 const open = (row) => {
   editingId.value = row?.id || null
+  editingAuditStatus.value = row?.auditStatus ?? 1
   Object.assign(form, emptyForm, row || {}, {
     images: normalizeImages(row?.images)
   })
+  // 未审核商品强制锁定为下线状态，防止误操作
+  if (row?.id && row?.auditStatus !== 1) {
+    form.status = 0
+  }
   visible.value = true
 }
 const normalizeImages = (images) => Array.isArray(images)
@@ -187,6 +205,11 @@ const save = async () => {
   }
 }
 const toggle = async (row) => {
+  // 前端二次校验：未审核通过的商品不允许上架
+  if (row.status !== 1 && row.auditStatus !== 1) {
+    ElMessage.warning('该商品尚未通过审核，无法直接上架，请先点击审核按钮完成审核')
+    return
+  }
   await adminApi.updateProduct(row.id, {
     sku: row.sku,
     name: row.name,
@@ -236,6 +259,7 @@ const submitProductAudit = async () => {
     })
     ElMessage.success(auditForm.auditStatus === 1 ? '审核通过' : '已拒绝')
     auditDialogVisible.value = false
+    refreshPendingCounts()
     load()
   } finally {
     auditSubmitting.value = false
@@ -244,3 +268,6 @@ const submitProductAudit = async () => {
 
 onMounted(load)
 </script>
+
+<style scoped>
+</style>

@@ -15,6 +15,8 @@ public interface BuyerReviewRepository extends JpaRepository<BuyerReview, Long> 
 
     Page<BuyerReview> findByBuyerId(Long buyerId, Pageable pageable);
 
+    Page<BuyerReview> findByMerchantId(Long merchantId, Pageable pageable);
+
     @Query(value = "SELECT COUNT(*) FROM buyer_review_by_merchant r WHERE r.buyer_id = :buyerId", nativeQuery = true)
     long countByBuyerId(@Param("buyerId") Long buyerId);
 

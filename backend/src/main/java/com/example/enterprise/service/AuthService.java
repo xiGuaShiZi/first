@@ -75,6 +75,8 @@ public class AuthService {
     private final SysPermissionRepository sysPermissionRepository;
     /** 密码编码器 */
     private final PasswordEncoder passwordEncoder;
+    /** Redis 缓存服务 */
+    private final CacheService cacheService;
     /** 内存Token存储，线程安全 */
     private final Map<String, TokenSession> tokenStore = new ConcurrentHashMap<>();
 
@@ -108,6 +110,8 @@ public class AuthService {
         user.setLastLoginTime(LocalDateTime.now());
         user.setUpdateTime(LocalDateTime.now());
         sysUserRepository.save(user);
+        // 登录后缓存 SysUser 实体
+        cacheService.putSysUser(user.getId(), user);
 
         String token = newToken();
         putSession(token, new TokenUser(user.getId(), user.getUsername(), "ADMIN", roles, permissions), tokenTtlMinutes);
@@ -182,6 +186,9 @@ public class AuthService {
         customer.setUpdateTime(LocalDateTime.now());
         Customer savedCustomer = customerRepository.save(customer);
         
+        // 注册后清除客户缓存
+        cacheService.evictCustomer(savedCustomer.getId());
+        
         // 注册时创建默认地址记录
         CustomerAddress defaultAddress = new CustomerAddress();
         defaultAddress.setCustomerId(savedCustomer.getId());
@@ -247,7 +254,10 @@ public class AuthService {
         merchant.setStatus(1);
         merchant.setCreateTime(LocalDateTime.now());
         merchant.setUpdateTime(LocalDateTime.now());
-        return merchantRepository.save(merchant);
+        Merchant saved = merchantRepository.save(merchant);
+        // 注册后清除商家实体缓存
+        cacheService.evictMerchant(saved.getId());
+        return saved;
     }
 
     /**
@@ -302,6 +312,9 @@ public class AuthService {
             }
         }
 
+        // 审核状态变更，清除商家资料缓存和商家实体缓存
+        cacheService.evictMerchantProfile(merchantId);
+        cacheService.evictMerchant(merchantId);
         return savedMerchant;
     }
 
@@ -326,11 +339,15 @@ public class AuthService {
         customer.setAuditRemark(auditRemark);
         customer.setAuditTime(LocalDateTime.now());
         customer.setUpdateTime(LocalDateTime.now());
-        return customerRepository.save(customer);
+        Customer saved = customerRepository.save(customer);
+        // 审核状态变更，清除客户实体缓存
+        cacheService.evictCustomer(customerId);
+        return saved;
     }
 
     /**
      * 获取商家个人资料，隐藏密码字段
+     * <p>优先从 Redis 缓存读取，缓存未命中时查库并回填缓存</p>
      * @param tokenUser 当前登录用户
      * @return 商家实体（隐藏密码）
      */
@@ -338,8 +355,15 @@ public class AuthService {
         if (!"MERCHANT".equals(tokenUser.role())) {
             throw new BusinessException(403, "无权访问");
         }
+        // 优先从缓存获取
+        Merchant cached = cacheService.getMerchantProfile(tokenUser.id(), Merchant.class);
+        if (cached != null) {
+            return cached;
+        }
         Merchant merchant = merchantRepository.findById(tokenUser.id())
                 .orElseThrow(() -> new BusinessException(401, "请先登录"));
+        // 写入缓存
+        cacheService.putMerchantProfile(tokenUser.id(), merchant);
         return merchant;
     }
 
@@ -361,14 +385,24 @@ public class AuthService {
         merchant.setPassword(passwordEncoder.encode(newPassword));
         merchant.setUpdateTime(LocalDateTime.now());
         merchantRepository.save(merchant);
+        // 密码变更，清除商家资料缓存和商家实体缓存
+        cacheService.evictMerchantProfile(tokenUser.id());
+        cacheService.evictMerchant(tokenUser.id());
     }
 
     /**
      * 获取客户个人资料，隐藏密码字段，包含默认收货地址
+     * <p>优先从 Redis 缓存读取，缓存未命中时查库并回填缓存</p>
      * @param tokenUser 当前登录用户
      * @return 客户个人资料（包含默认地址）
      */
     public CustomerProfileVO customerProfile(TokenUser tokenUser) {
+        // 优先从缓存获取
+        CustomerProfileVO cached = cacheService.getCustomerProfile(tokenUser.id(), CustomerProfileVO.class);
+        if (cached != null) {
+            return cached;
+        }
+
         Customer customer = customerRepository.findById(tokenUser.id())
                 .orElseThrow(() -> new BusinessException(401, "请先登录"));
         
@@ -410,6 +444,9 @@ public class AuthService {
             profile.setBuyerMerchantPositiveRate(0.0);
         }
 
+        // 写入缓存
+        cacheService.putCustomerProfile(tokenUser.id(), profile);
+
         return profile;
     }
 
@@ -433,7 +470,11 @@ public class AuthService {
         if (customer.getBalance() == null) customer.setBalance(java.math.BigDecimal.ZERO);
         customer.setBalance(customer.getBalance().add(amount));
         customer.setUpdateTime(LocalDateTime.now());
-        return customerRepository.save(customer);
+        Customer saved = customerRepository.save(customer);
+        // 余额变更，清除客户个人资料缓存和客户实体缓存
+        cacheService.evictCustomerProfile(customerId);
+        cacheService.evictCustomer(customerId);
+        return saved;
     }
 
     /**
@@ -463,7 +504,11 @@ public class AuthService {
         customer.setPoints(current - actualPointsUsed);
         customer.setBalance(customer.getBalance().add(amount));
         customer.setUpdateTime(LocalDateTime.now());
-        return customerRepository.save(customer);
+        Customer saved = customerRepository.save(customer);
+        // 积分和余额变更，清除客户个人资料缓存和客户实体缓存
+        cacheService.evictCustomerProfile(tokenUser.id());
+        cacheService.evictCustomer(tokenUser.id());
+        return saved;
     }
 
     /**
@@ -481,6 +526,8 @@ public class AuthService {
         customer.setPassword(passwordEncoder.encode(newPassword));
         customer.setUpdateTime(LocalDateTime.now());
         customerRepository.save(customer);
+        // 密码变更，清除客户实体缓存
+        cacheService.evictCustomer(tokenUser.id());
     }
 
     /**
@@ -493,23 +540,39 @@ public class AuthService {
         if (!"ADMIN".equals(tokenUser.role())) {
             throw new BusinessException(403, "无权修改管理员密码");
         }
-        SysUser user = sysUserRepository.findById(tokenUser.id())
-                .orElseThrow(() -> new BusinessException(401, "请先登录"));
+        // 优先从缓存获取
+        SysUser user = cacheService.getSysUser(tokenUser.id(), SysUser.class);
+        if (user == null) {
+            user = sysUserRepository.findById(tokenUser.id())
+                    .orElseThrow(() -> new BusinessException(401, "请先登录"));
+        }
         if (!matches(oldPassword, user.getPassword())) {
             throw new BusinessException("原密码错误");
         }
         user.setPassword(passwordEncoder.encode(newPassword));
         user.setUpdateTime(LocalDateTime.now());
         sysUserRepository.save(user);
+        // 密码变更，清除 SysUser 缓存
+        cacheService.evictSysUser(tokenUser.id());
     }
 
     /**
-     * 查询客户的所有收货地址
+     * 获取客户收货地址列表
+     * <p>优先从 Redis 缓存读取，缓存未命中时查库并回填缓存</p>
      * @param tokenUser 当前登录用户
-     * @return 收货地址列表
+     * @return 地址列表
      */
     public List<CustomerAddress> customerAddresses(TokenUser tokenUser) {
-        return customerAddressRepository.findByCustomerIdOrderByIsDefaultDescUpdateTimeDesc(tokenUser.id());
+        // 优先从缓存获取
+        List<CustomerAddress> cached = cacheService.getCustomerAddresses(
+                tokenUser.id(), new com.fasterxml.jackson.core.type.TypeReference<List<CustomerAddress>>() {});
+        if (cached != null) {
+            return cached;
+        }
+        List<CustomerAddress> addresses = customerAddressRepository.findByCustomerIdOrderByIsDefaultDescUpdateTimeDesc(tokenUser.id());
+        // 写入缓存
+        cacheService.putCustomerAddresses(tokenUser.id(), addresses);
+        return addresses;
     }
 
     /**
@@ -542,6 +605,9 @@ public class AuthService {
             setDefaultAddress(tokenUser, saved.getId());
             saved.setIsDefault(1);
         }
+        // 地址变更，清除地址缓存和个人资料缓存（包含默认地址）
+        cacheService.evictCustomerAddresses(tokenUser.id());
+        cacheService.evictCustomerProfile(tokenUser.id());
         return saved;
     }
 
@@ -561,6 +627,9 @@ public class AuthService {
             customerAddressRepository.save(address);
         });
         target.setIsDefault(1);
+        // 默认地址变更，清除地址缓存和个人资料缓存
+        cacheService.evictCustomerAddresses(tokenUser.id());
+        cacheService.evictCustomerProfile(tokenUser.id());
         return target;
     }
 
@@ -573,6 +642,9 @@ public class AuthService {
         CustomerAddress address = customerAddressRepository.findByIdAndCustomerId(id, tokenUser.id())
                 .orElseThrow(() -> new BusinessException("收货地址不存在"));
         customerAddressRepository.delete(address);
+        // 地址删除，清除地址缓存和个人资料缓存
+        cacheService.evictCustomerAddresses(tokenUser.id());
+        cacheService.evictCustomerProfile(tokenUser.id());
     }
 
     /**

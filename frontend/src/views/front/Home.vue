@@ -66,12 +66,20 @@
       <router-link to="/product">查看全部</router-link>
     </div>
     <div class="item-grid">
-      <router-link v-for="item in products" :key="item.id" class="media-item" :to="`/product/${item.id}`">
-        <img :src="imageSrc(item.image, productPlaceholder)" alt="" />
-        <div class="product-meta"><span>{{ item.category || '闲置物品' }}</span><strong>￥{{ item.price || '0.00' }}</strong></div>
-        <h3>{{ item.name }}</h3>
-        <p>{{ item.description }}</p>
-      </router-link>
+      <div v-for="item in products" :key="item.id" class="media-item">
+        <router-link :to="`/product/${item.id}`">
+          <img :src="imageSrc(item.image, productPlaceholder)" alt="" />
+          <div class="product-meta"><span>{{ item.category || '闲置物品' }}</span><strong>￥{{ item.price || '0.00' }}</strong></div>
+          <h3>{{ item.name }}</h3>
+          <p>{{ item.description }}</p>
+        </router-link>
+        <div v-if="item.publisherType === 'merchant'" class="product-seller-info">
+          <router-link :to="`/shop/${item.publisherId}`" class="seller-link">
+            <el-tag size="small" type="success" effect="plain">店铺</el-tag>
+            <span>{{ item.publisherName }}</span>
+          </router-link>
+        </div>
+      </div>
     </div>
     <el-empty v-if="loaded && !products.length" description="暂无已发布闲置物品" />
   </section>

@@ -87,7 +87,7 @@ public class Product {
 
     /** 审核状态：0-待审核，1-已通过，2-已拒绝（用于商家发布商品的审核流程） */
     @Column(name = "audit_status")
-    private Integer auditStatus = 1;
+    private Integer auditStatus = 0;
 
     /** 审核备注 */
     @Column(name = "audit_remark", length = 255)
@@ -110,4 +110,16 @@ public class Product {
     /** 运行时计算的好评率（百分比，非持久化） */
     @Transient
     private Double positiveRate;
+
+    /** 发布者名称（商家店铺名或学生用户名，非持久化） */
+    @Transient
+    private String publisherName;
+
+    /** 发布者类型：merchant-商家，customer-学生（非持久化） */
+    @Transient
+    private String publisherType;
+
+    /** 发布者头像/Logo（非持久化） */
+    @Transient
+    private String publisherAvatar;
 }

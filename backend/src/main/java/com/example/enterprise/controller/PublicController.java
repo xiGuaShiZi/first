@@ -98,4 +98,12 @@ public class PublicController {
                                      @RequestParam(defaultValue = "10") int size) {
         return Result.success(contentService.getPublicShop(merchantId, page, size));
     }
+
+    /** 分页查询店铺的公开评价列表 */
+    @GetMapping("/shops/{merchantId}/reviews")
+    public Result<Page<ProductReviewVO>> shopReviews(@PathVariable Long merchantId,
+                                                      @RequestParam(defaultValue = "1") int page,
+                                                      @RequestParam(defaultValue = "10") int size) {
+        return Result.success(contentService.publicShopReviews(merchantId, page, size));
+    }
 }

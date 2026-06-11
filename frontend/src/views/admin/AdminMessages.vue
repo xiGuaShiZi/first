@@ -57,9 +57,11 @@
 -->
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { inject, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { adminApi } from '../../api/modules'
+
+const refreshPendingCounts = inject('refreshPendingCounts')
 
 const list = ref([])
 const total = ref(0)
@@ -91,12 +93,14 @@ const view = (row) => {
 const mark = async (row, nextStatus) => {
   await adminApi.updateMessageStatus(row.id, nextStatus)
   ElMessage.success('状态已更新')
+  refreshPendingCounts()
   load()
 }
 const remove = async (id) => {
   await ElMessageBox.confirm('确认删除该咨询？', '删除确认', { type: 'warning' })
   await adminApi.deleteMessage(id)
   ElMessage.success('已删除')
+  refreshPendingCounts()
   load()
 }
 onMounted(load)

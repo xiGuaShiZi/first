@@ -1,5 +1,6 @@
 package com.example.enterprise.service;
 
+import com.example.enterprise.common.PageUtil;
 import com.example.enterprise.dto.*;
 import com.example.enterprise.entity.*;
 import com.example.enterprise.exception.BusinessException;
@@ -75,6 +76,8 @@ public class ContentService {
     private final StringRedisTemplate redisTemplate;
     /** JSON序列化工具 */
     private final ObjectMapper objectMapper;
+    /** Redis缓存服务 */
+    private final CacheService cacheService;
     @jakarta.persistence.PersistenceContext
     private jakarta.persistence.EntityManager entityManager;
 
@@ -104,7 +107,7 @@ public class ContentService {
      * @return 分页校园贴士结果
      */
     public Page<News> listNews(String keyword, Integer status, int page, int size, boolean publicOnly) {
-        Pageable pageable = PageRequest.of(Math.max(page - 1, 0), normalizeSize(size),
+        Pageable pageable = PageUtil.of(page, size,
                 Sort.by(Sort.Direction.ASC, "sort").and(Sort.by(Sort.Direction.DESC, "createTime")));
         Specification<News> specification = (root, query, builder) -> {
             List<Predicate> predicates = new ArrayList<>();
@@ -245,10 +248,12 @@ public class ContentService {
                 idsSql.append(" AND p.category = ?");
                 qparams.add(category.trim());
             }
-            idsSql.append(" GROUP BY p.id ORDER BY (SUM(CASE WHEN r.quality_rating >= 4 THEN 1 ELSE 0 END) / NULLIF(COUNT(r.id),0)) DESC, p.create_time DESC LIMIT " + offset + ", " + pageSize);
+            idsSql.append(" GROUP BY p.id ORDER BY (SUM(CASE WHEN r.quality_rating >= 4 THEN 1 ELSE 0 END) / NULLIF(COUNT(r.id),0)) DESC, p.create_time DESC");
 
             jakarta.persistence.Query idsQuery = entityManager.createNativeQuery(idsSql.toString());
             for (int i = 0; i < qparams.size(); i++) idsQuery.setParameter(i + 1, qparams.get(i));
+            idsQuery.setFirstResult(offset);
+            idsQuery.setMaxResults(pageSize);
             @SuppressWarnings("unchecked")
             List<Number> idResults = idsQuery.getResultList();
             List<Long> ids = idResults.stream().map(Number::longValue).toList();
@@ -266,10 +271,9 @@ public class ContentService {
                 }
 
                 // compute positiveRate for the batch via one aggregated query
-                String aggSql = "SELECT r.product_id, SUM(CASE WHEN r.quality_rating >= 4 THEN 1 ELSE 0 END) AS positive_count, COUNT(r.id) AS total_count FROM product_review r WHERE r.product_id IN (" + ids.stream().map(i -> "?").collect(java.util.stream.Collectors.joining(",")) + ") GROUP BY r.product_id";
+                String aggSql = "SELECT r.product_id, SUM(CASE WHEN r.quality_rating >= 4 THEN 1 ELSE 0 END) AS positive_count, COUNT(r.id) AS total_count FROM product_review r WHERE r.product_id IN (:productIds) GROUP BY r.product_id";
                 jakarta.persistence.Query aggQuery = entityManager.createNativeQuery(aggSql);
-                int idx = 1;
-                for (Long id : ids) aggQuery.setParameter(idx++, id);
+                aggQuery.setParameter("productIds", ids);
                 @SuppressWarnings("unchecked")
                 List<Object[]> aggRows = aggQuery.getResultList();
                 java.util.Map<Long, double[]> aggMap = new java.util.HashMap<>();
@@ -279,9 +283,10 @@ public class ContentService {
                     double tot = ((Number) row[2]).doubleValue();
                     aggMap.put(pid, new double[]{positive, tot});
                 }
-                // attach images and set positiveRate
+                // attach images, publisherInfo and set positiveRate
                 for (Product p : products) {
                     attachProductImages(p);
+                    attachPublisherInfo(p);
                     double pr = 0.0;
                     double[] a = aggMap.get(p.getId());
                     if (a != null && a[1] > 0) pr = a[0] / a[1] * 100.0;
@@ -293,7 +298,7 @@ public class ContentService {
         }
 
         // default handling for other sorts
-        Pageable pageable = PageRequest.of(Math.max(page - 1, 0), normalizeSize(size), productSort(sort));
+        Pageable pageable = PageUtil.of(page, size, productSort(sort));
         Specification<Product> specification = (root, query, builder) -> {
             List<Predicate> predicates = new ArrayList<>();
             if (publicOnly) {
@@ -310,13 +315,13 @@ public class ContentService {
         Page<Product> products = productRepository.findAll(specification, pageable);
         List<Product> content = products.getContent();
         content.forEach(this::attachProductImages);
+        content.forEach(this::attachPublisherInfo);
         // compute positiveRate for the visible page to support UI display
         if (!content.isEmpty()) {
             List<Long> ids = content.stream().map(Product::getId).toList();
-            String aggSql = "SELECT r.product_id, SUM(CASE WHEN r.quality_rating >= 4 THEN 1 ELSE 0 END) AS positive_count, COUNT(r.id) AS total_count FROM product_review r WHERE r.product_id IN (" + ids.stream().map(i -> "?").collect(java.util.stream.Collectors.joining(",")) + ") GROUP BY r.product_id";
+            String aggSql = "SELECT r.product_id, SUM(CASE WHEN r.quality_rating >= 4 THEN 1 ELSE 0 END) AS positive_count, COUNT(r.id) AS total_count FROM product_review r WHERE r.product_id IN (:productIds) GROUP BY r.product_id";
             jakarta.persistence.Query aggQuery = entityManager.createNativeQuery(aggSql);
-            int idx = 1;
-            for (Long id : ids) aggQuery.setParameter(idx++, id);
+            aggQuery.setParameter("productIds", ids);
             @SuppressWarnings("unchecked")
             List<Object[]> aggRows = aggQuery.getResultList();
             java.util.Map<Long, double[]> aggMap = new java.util.HashMap<>();
@@ -341,7 +346,15 @@ public class ContentService {
      * @return 分类名称列表
      */
     public List<String> publicProductCategories() {
-        return productRepository.findPublicCategories();
+        // 优先从缓存获取
+        List<String> cached = cacheService.getProductCategories();
+        if (cached != null) {
+            return cached;
+        }
+        List<String> categories = productRepository.findPublicCategories();
+        // 写入缓存
+        cacheService.putProductCategories(categories);
+        return categories;
     }
 
     /**
@@ -379,6 +392,8 @@ public class ContentService {
         saveProductImages(saved.getId(), dto.getImages());
         attachProductImages(saved);
         deleteCache(HOME_CACHE);
+        // 新商品可能新增分类，清除分类缓存
+        evictProductCategoriesCache();
         return saved;
     }
 
@@ -390,7 +405,7 @@ public class ContentService {
      * @return 分页闲置物品结果
      */
     public Page<Product> listMyProducts(Long customerId, int page, int size) {
-        Pageable pageable = PageRequest.of(Math.max(page - 1, 0), normalizeSize(size), Sort.by(Sort.Direction.DESC, "createTime"));
+        Pageable pageable = PageUtil.of(page, size);
         Specification<Product> specification = (root, query, builder) ->
                 builder.equal(root.get("publisherId"), customerId);
         Page<Product> products = productRepository.findAll(specification, pageable);
@@ -412,7 +427,10 @@ public class ContentService {
         }
         productImageRepository.deleteByProductId(productId);
         productRepository.deleteById(productId);
+        cacheService.evictProductDetail(productId);
         deleteCache(HOME_CACHE);
+        // 商品删除可能影响分类列表，清除分类缓存
+        evictProductCategoriesCache();
     }
 
     /**
@@ -456,7 +474,9 @@ public class ContentService {
         Product saved = productRepository.save(product);
         saveProductImages(saved.getId(), dto.getImages());
         attachProductImages(saved);
+        cacheService.evictProductDetail(productId);
         deleteCache(HOME_CACHE);
+        evictProductCategoriesCache();
         return saved;
     }
 
@@ -501,6 +521,7 @@ public class ContentService {
         saveProductImages(saved.getId(), dto.getImages());
         attachProductImages(saved);
         deleteCache(HOME_CACHE);
+        evictProductCategoriesCache();
         return saved;
     }
 
@@ -512,7 +533,7 @@ public class ContentService {
      * @return 分页闲置物品结果
      */
     public Page<Product> listMerchantProducts(Long merchantId, int page, int size) {
-        Pageable pageable = PageRequest.of(Math.max(page - 1, 0), normalizeSize(size), Sort.by(Sort.Direction.DESC, "createTime"));
+        Pageable pageable = PageUtil.of(page, size);
         Page<Product> products = productRepository.findByPublisherId(merchantId, pageable);
         products.getContent().forEach(this::attachProductImages);
         return products;
@@ -561,7 +582,9 @@ public class ContentService {
         Product saved = productRepository.save(product);
         saveProductImages(saved.getId(), dto.getImages());
         attachProductImages(saved);
+        cacheService.evictProductDetail(productId);
         deleteCache(HOME_CACHE);
+        evictProductCategoriesCache();
         return saved;
     }
 
@@ -579,7 +602,9 @@ public class ContentService {
         }
         productImageRepository.deleteByProductId(productId);
         productRepository.deleteById(productId);
+        cacheService.evictProductDetail(productId);
         deleteCache(HOME_CACHE);
+        evictProductCategoriesCache();
     }
 
     /**
@@ -602,7 +627,9 @@ public class ContentService {
         }
         product.setStatus(normalizeStatus(status, 1));
         product.setUpdateTime(LocalDateTime.now());
-        return productRepository.save(product);
+        Product saved = productRepository.save(product);
+        cacheService.evictProductDetail(productId);
+        return saved;
     }
 
     /**
@@ -611,8 +638,16 @@ public class ContentService {
      * @return 商家实体
      */
     public Merchant getMerchantShopInfo(Long merchantId) {
-        return merchantRepository.findById(merchantId)
+        // 优先从缓存获取
+        Merchant cached = cacheService.getMerchant(merchantId, Merchant.class);
+        if (cached != null) {
+            return cached;
+        }
+        Merchant merchant = merchantRepository.findById(merchantId)
                 .orElseThrow(() -> new BusinessException("商家不存在"));
+        // 写入缓存
+        cacheService.putMerchant(merchantId, merchant);
+        return merchant;
     }
 
     /**
@@ -635,7 +670,10 @@ public class ContentService {
             merchant.setShopLogo(validateServerImagePath(dto.getShopLogo(), "店铺Logo"));
         }
         merchant.setUpdateTime(LocalDateTime.now());
-        return merchantRepository.save(merchant);
+        Merchant saved = merchantRepository.save(merchant);
+        // 店铺信息变更，清除商家实体缓存
+        cacheService.evictMerchant(merchantId);
+        return saved;
     }
 
     /**
@@ -682,6 +720,8 @@ public class ContentService {
             // 审计记录不应阻塞主流程，失败则忽略
         }
 
+        // 等级变更，清除商家实体缓存
+        cacheService.evictMerchant(merchantId);
         return saved;
     }
 
@@ -693,8 +733,12 @@ public class ContentService {
      * @return 店铺展示VO
      */
     public ShopVO getPublicShop(Long merchantId, int page, int size) {
-        Merchant merchant = merchantRepository.findById(merchantId)
+        // 优先从缓存获取商家实体
+        Merchant merchant = cacheService.getMerchant(merchantId, Merchant.class);
+        if (merchant == null) {
+            merchant = merchantRepository.findById(merchantId)
                 .orElseThrow(() -> new BusinessException("商家不存在"));
+        }
         if (!Integer.valueOf(1).equals(merchant.getAuditStatus())) {
             throw new BusinessException("店铺未通过审核");
         }
@@ -711,46 +755,26 @@ public class ContentService {
         shopVO.setProductTotal(productTotal);
         shopVO.setOnSaleProductCount(onSaleProductCount);
 
-        // 计算总销量
-        Page<Product> allProducts = productRepository.findByPublisherId(merchantId, PageRequest.of(0, Integer.MAX_VALUE));
-        int totalSales = allProducts.getContent().stream()
-                .mapToInt(p -> p.getSalesCount() == null ? 0 : p.getSalesCount())
-                .sum();
-        shopVO.setTotalSales(totalSales);
+        // 计算总销量（使用聚合查询，避免全表加载）
+        long totalSales = productRepository.sumSalesCountByPublisherId(merchantId);
+        shopVO.setTotalSales((int) totalSales);
 
         // 查询在售商品列表（只查询该商家的商品）
-        Pageable pageable = PageRequest.of(Math.max(page - 1, 0), normalizeSize(size), Sort.by(Sort.Direction.DESC, "createTime"));
+        Pageable pageable = PageUtil.of(page, size);
         Page<Product> merchantProducts = productRepository.findByPublisherIdAndStatus(merchantId, 1, pageable);
         merchantProducts.getContent().forEach(this::attachProductImages);
         shopVO.setProducts(merchantProducts);
 
-        // 计算店铺评分和评价总数
-        List<ProductReview> allReviews = new ArrayList<>();
-        for (Product product : allProducts.getContent()) {
-            allReviews.addAll(productReviewRepository.findByProductIdOrderByCreateTimeDesc(product.getId()));
-        }
-        shopVO.setReviewCount((long) allReviews.size());
-        if (!allReviews.isEmpty()) {
-            double avgRating = allReviews.stream()
-                    .filter(r -> r.getQualityRating() != null)
-                    .mapToInt(ProductReview::getQualityRating)
-                    .average()
-                    .orElse(0.0);
+        // 计算店铺评分和评价总数（使用聚合查询，避免逐商品加载）
+        long reviewCount = productReviewRepository.countByMerchantId(merchantId);
+        shopVO.setReviewCount(reviewCount);
+        if (reviewCount > 0) {
+            long positiveCount = productReviewRepository.countPositiveByMerchantId(merchantId);
+            double avgRating = productReviewRepository.avgQualityRatingByMerchantId(merchantId);
+            double avgServiceAttitude = productReviewRepository.avgServiceAttitudeByMerchantId(merchantId);
             shopVO.setShopRating(Math.round(avgRating * 10.0) / 10.0);
-
-            // 计算服务态度评分
-            double avgServiceAttitude = allReviews.stream()
-                    .filter(r -> r.getServiceAttitudeRating() != null)
-                    .mapToInt(ProductReview::getServiceAttitudeRating)
-                    .average()
-                    .orElse(0.0);
             shopVO.setServiceAttitudeRating(Math.round(avgServiceAttitude * 10.0) / 10.0);
-
-            // 计算好评率（4星及以上）
-            long positiveReviews = allReviews.stream()
-                    .filter(r -> r.getQualityRating() != null && r.getQualityRating() >= 4)
-                    .count();
-            double positiveRate = (double) positiveReviews / allReviews.size() * 100;
+            double positiveRate = (double) positiveCount / reviewCount * 100;
             shopVO.setPositiveRate(Math.round(positiveRate * 10.0) / 10.0);
         }
 
@@ -758,6 +782,11 @@ public class ContentService {
         shopVO.setMerchantLevel(merchant.getMerchantLevel());
 
         return shopVO;
+    }
+
+    /** 在商品发布/更新/删除时清除分类缓存 */
+    private void evictProductCategoriesCache() {
+        cacheService.evictProductCategories();
     }
 
     /**
@@ -792,7 +821,19 @@ public class ContentService {
         product.setConditionLevel(dto.getConditionLevel());
         product.setUsageInstructions(sanitizeContentHtml(dto.getUsageInstructions()));
         product.setDetail(sanitizeContentHtml(dto.getDetail()));
-        product.setStatus(normalizeStatus(dto.getStatus(), 1));
+        // 管理员更新已有商品时：未通过审核的商品不允许直接上架，必须走审核流程
+        if (id != null) {
+            Integer currentAuditStatus = product.getAuditStatus() == null ? 0 : product.getAuditStatus();
+            int newStatus = normalizeStatus(dto.getStatus(), 1);
+            if (!Integer.valueOf(1).equals(currentAuditStatus) && newStatus == 1) {
+                throw new BusinessException("该商品尚未通过审核，无法直接上架，请先在商品列表中完成审核");
+            }
+            product.setStatus(newStatus);
+        } else {
+            // 管理员直接创建的商品视为已通过审核，无需走审核流程
+            product.setAuditStatus(1);
+            product.setStatus(normalizeStatus(dto.getStatus(), 1));
+        }
         if (product.getCreateTime() == null) {
             product.setCreateTime(LocalDateTime.now());
         }
@@ -801,6 +842,7 @@ public class ContentService {
         saveProductImages(saved.getId(), dto.getImages());
         attachProductImages(saved);
         deleteCache(HOME_CACHE);
+        evictProductCategoriesCache();
         return saved;
     }
 
@@ -816,6 +858,7 @@ public class ContentService {
         productImageRepository.deleteByProductId(id);
         productRepository.deleteById(id);
         deleteCache(HOME_CACHE);
+        evictProductCategoriesCache();
     }
 
     /**
@@ -824,11 +867,21 @@ public class ContentService {
      * @return 物品实体（含图片）
      */
     public Product getPublicProduct(Long id) {
+        // 优先从缓存获取
+        Product cached = cacheService.getProductDetail(id, Product.class);
+        if (cached != null) {
+            attachProductImages(cached);
+            attachPublisherInfo(cached);
+            return cached;
+        }
         Product product = productRepository.findById(id).orElseThrow(() -> new BusinessException("物品不存在"));
         if (!Integer.valueOf(1).equals(product.getStatus())) {
             throw new BusinessException("物品已下架");
         }
         attachProductImages(product);
+        attachPublisherInfo(product);
+        // 写入缓存
+        cacheService.putProductDetail(id, product);
         return product;
     }
 
@@ -857,6 +910,7 @@ public class ContentService {
         product.setUpdateTime(LocalDateTime.now());
         Product saved = productRepository.save(product);
         deleteCache(HOME_CACHE);
+        evictProductCategoriesCache();
         return saved;
     }
 
@@ -873,6 +927,20 @@ public class ContentService {
     }
 
     /**
+     * 分页查询店铺的公开评价列表
+     * @param merchantId 商家ID
+     * @param page 页码
+     * @param size 每页数量
+     * @return 分页评价VO结果
+     */
+    public Page<ProductReviewVO> publicShopReviews(Long merchantId, int page, int size) {
+        // 使用无排序的分页，因为 native query 已包含 ORDER BY
+        Pageable pageable = PageRequest.of(PageUtil.normalizePage(page), PageUtil.normalizeSize(size));
+        return productReviewRepository.findByMerchantId(merchantId, pageable)
+                .map(this::toProductReviewVO);
+    }
+
+    /**
      * 提交咨询留言
      * @param dto 留言请求参数
      * @return 保存后的留言实体
@@ -885,6 +953,7 @@ public class ContentService {
         message.setContent(dto.getContent());
         message.setStatus(0);
         message.setCreateTime(LocalDateTime.now());
+        message.setUpdateTime(LocalDateTime.now());
         return messageRepository.save(message);
     }
 
@@ -896,7 +965,7 @@ public class ContentService {
      * @return 分页留言结果
      */
     public Page<Message> listMessages(Integer status, int page, int size) {
-        Pageable pageable = PageRequest.of(Math.max(page - 1, 0), normalizeSize(size), Sort.by(Sort.Direction.DESC, "createTime"));
+        Pageable pageable = PageUtil.of(page, size);
         return status == null ? messageRepository.findAll(pageable) : messageRepository.findByStatus(status, pageable);
     }
 
@@ -1064,6 +1133,8 @@ public class ContentService {
         data.put("orderTotal", productOrderRepository.count());
         data.put("returnPendingTotal", returnRequestRepository.countByStatus("APPLY_PENDING"));
         data.put("merchantPendingTotal", merchantRepository.countByAuditStatus(0));
+        data.put("customerPendingTotal", customerRepository.countByAuditStatus(0));
+        data.put("productPendingAudit", productRepository.countByAuditStatus(0));
         return data;
     }
 
@@ -1075,7 +1146,7 @@ public class ContentService {
      * @return 分页商家结果
      */
     public Page<Merchant> listMerchants(Integer auditStatus, int page, int size) {
-        Pageable pageable = PageRequest.of(Math.max(page - 1, 0), normalizeSize(size), Sort.by(Sort.Direction.DESC, "createTime"));
+        Pageable pageable = PageUtil.of(page, size);
         if (auditStatus == null) {
             return merchantRepository.findAll(pageable);
         }
@@ -1090,7 +1161,7 @@ public class ContentService {
      * @return 分页客户结果
      */
     public org.springframework.data.domain.Page<com.example.enterprise.entity.Customer> listCustomers(Integer auditStatus, int page, int size) {
-        Pageable pageable = PageRequest.of(Math.max(page - 1, 0), normalizeSize(size), Sort.by(Sort.Direction.DESC, "createTime"));
+        Pageable pageable = PageUtil.of(page, size);
         if (auditStatus == null) {
             return (org.springframework.data.domain.Page<com.example.enterprise.entity.Customer>) ((org.springframework.data.jpa.repository.JpaRepository) customerRepository).findAll(pageable);
         }
@@ -1099,7 +1170,7 @@ public class ContentService {
 
     /** 分页大小标准化，限制在1-100之间 */
     private int normalizeSize(int size) {
-        return Math.min(Math.max(size, 1), 100);
+        return PageUtil.normalizeSize(size);
     }
 
     /** 闲置物品排序方式映射 */
@@ -1125,13 +1196,12 @@ public class ContentService {
 
     /** 写入缓存（当前禁用，确保数据库为准） */
     private void writeCache(String key, Object value) {
-        // Cache is optional in the MariaDB-only deployment. Keep writes disabled
-        // so stale external cache data can never override database state.
+        cacheService.set(key, value, CacheService.GLOBAL_TTL);
     }
 
-    /** 读取缓存（当前禁用） */
+    /** 读取缓存，Redis 不可用时返回 null */
     private String readCache(String key) {
-        return null;
+        return cacheService.getString(key);
     }
 
     /** 校园贴士HTML安全过滤（等同于通用内容过滤） */
@@ -1208,12 +1278,28 @@ public class ContentService {
         return vo;
     }
 
+    /**
+     * 填充发布者信息到商品实体（商家店铺名/学生用户名）
+     */
+    private void attachPublisherInfo(Product product) {
+        if (product.getPublisherId() == null) return;
+        // 优先尝试查找商家
+        merchantRepository.findById(product.getPublisherId()).ifPresentOrElse(merchant -> {
+            product.setPublisherName(merchant.getShopName() != null ? merchant.getShopName() : merchant.getRealName() + "的店");
+            product.setPublisherType("merchant");
+            product.setPublisherAvatar(merchant.getShopLogo());
+        }, () -> {
+            // 不是商家则查找学生用户
+            customerRepository.findById(product.getPublisherId()).ifPresent(customer -> {
+                product.setPublisherName(customer.getUsername());
+                product.setPublisherType("customer");
+                product.setPublisherAvatar(null);
+            });
+        });
+    }
+
     /** 删除缓存键，Redis不可用时静默忽略 */
     private void deleteCache(String key) {
-        try {
-            redisTemplate.delete(key);
-        } catch (RuntimeException ignored) {
-            // Cache is optional; business APIs should keep working without Redis.
-        }
+        cacheService.delete(key);
     }
 }

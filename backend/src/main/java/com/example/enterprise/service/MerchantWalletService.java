@@ -57,6 +57,8 @@ public class MerchantWalletService {
     private final com.example.enterprise.repository.ProductReviewRepository productReviewRepository;
     /** 等级变更审计数据访问 */
     private final com.example.enterprise.repository.MerchantLevelAuditRepository merchantLevelAuditRepository;
+    /** Redis 缓存服务 */
+    private final CacheService cacheService;
 
     /** 是否启用商家等级定时评估任务（可通过配置开启/关闭） */
     @org.springframework.beans.factory.annotation.Value("${app.merchant-level-scheduler.enabled:true}")
@@ -109,7 +111,12 @@ public class MerchantWalletService {
      */
     /** * 查询商家钱包信息，若不存在则自动创建（并处理并发创建的竞态） * @param merchantId 商家ID * @return 钱包实体 */
     public MerchantWallet getWallet(Long merchantId) {
-        return walletRepository.findByMerchantId(merchantId)
+        // 优先从缓存获取
+        MerchantWallet cached = cacheService.getMerchantWallet(merchantId, MerchantWallet.class);
+        if (cached != null) {
+            return cached;
+        }
+        MerchantWallet wallet = walletRepository.findByMerchantId(merchantId)
                 .orElseGet(() -> {
                     try {
                         // 尝试创建钱包
@@ -121,6 +128,9 @@ public class MerchantWalletService {
                                 .orElseThrow(() -> ex);
                     }
                 });
+        // 写入缓存
+        cacheService.putMerchantWallet(merchantId, wallet);
+        return wallet;
     }
 
     /**
@@ -208,6 +218,8 @@ public class MerchantWalletService {
         wallet.setTotalIncome(wallet.getTotalIncome().add(merchantIncome));
         wallet.setUpdateTime(LocalDateTime.now());
         walletRepository.save(wallet);
+        // 钱包变更，清除缓存
+        cacheService.evictMerchantWallet(merchantId);
 
         // 记录交易流水
         WalletTransaction transaction = new WalletTransaction();
@@ -259,7 +271,7 @@ public class MerchantWalletService {
     }
 
     /**
-     * 处理退款
+     * 处理退款（钱包余额变更，清除缓存）
      * @param orderId 订单ID
      */
     @Transactional
@@ -284,7 +296,9 @@ public class MerchantWalletService {
             wallet.setTotalExpense(wallet.getTotalExpense().add(refundAmount));
             wallet.setUpdateTime(LocalDateTime.now());
             walletRepository.save(wallet);
-
+            // 退款后钱包变更，清除缓存
+            cacheService.evictMerchantWallet(merchantId);
+            
             // 记录退款流水
             WalletTransaction transaction = new WalletTransaction();
             transaction.setMerchantId(merchantId);

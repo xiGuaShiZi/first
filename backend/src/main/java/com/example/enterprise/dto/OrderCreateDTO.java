@@ -29,4 +29,7 @@ public class OrderCreateDTO {
 
     /** 完整收货地址 */
     private String address;
+
+    /** 议价出价ID（可选，传入已接受的议价记录ID时使用议价价格） */
+    private Long bargainOfferId;
 }

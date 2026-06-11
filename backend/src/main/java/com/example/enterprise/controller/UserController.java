@@ -280,6 +280,29 @@ public class UserController {
         return Result.success(commerceService.userReturns(authService.current(token(authorization)), page, size));
     }
 
+    /** 买家发起议价 */
+    @PostMapping("/bargain-offers")
+    public Result<com.example.enterprise.entity.BargainOffer> createBargainOffer(@RequestHeader("Authorization") String authorization,
+                                                                                  @RequestParam Long productId,
+                                                                                  @RequestParam java.math.BigDecimal offerPrice) {
+        return Result.success(commerceService.createBargainOffer(authService.current(token(authorization)), productId, offerPrice));
+    }
+
+    /** 分页查询买家议价记录 */
+    @GetMapping("/bargain-offers")
+    public Result<Page<com.example.enterprise.entity.BargainOffer>> myBargainOffers(@RequestHeader("Authorization") String authorization,
+                                                                                      @RequestParam(defaultValue = "1") int page,
+                                                                                      @RequestParam(defaultValue = "10") int size) {
+        return Result.success(commerceService.userBargainOffers(authService.current(token(authorization)).id(), page, size));
+    }
+
+    /** 买家取消议价 */
+    @PutMapping("/bargain-offers/{id}/cancel")
+    public Result<com.example.enterprise.entity.BargainOffer> cancelBargainOffer(@RequestHeader("Authorization") String authorization,
+                                                                                  @PathVariable Long id) {
+        return Result.success(commerceService.cancelBargainOffer(authService.current(token(authorization)), id));
+    }
+
     /** 从Authorization头中提取Token */
     private String token(String authorization) {
         return authorization == null ? null : authorization.replace("Bearer ", "");

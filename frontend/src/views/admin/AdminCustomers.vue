@@ -74,9 +74,11 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { inject, ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { adminApi } from '../../api/modules'
+
+const refreshPendingCounts = inject('refreshPendingCounts')
 
 const loading = ref(false)
 const customers = ref([])
@@ -117,6 +119,7 @@ const submitAudit = async () => {
     await adminApi.auditCustomer(currentCustomer.value.id, auditForm)
     ElMessage.success('审核成功')
     auditDialogVisible.value = false
+    refreshPendingCounts()
     loadData()
   } finally { submitting.value = false }
 }

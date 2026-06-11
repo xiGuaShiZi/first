@@ -80,4 +80,14 @@ public interface ProductOrderRepository extends JpaRepository<ProductOrder, Long
      */
     @Query(value = "SELECT COALESCE(SUM(total_amount), 0) FROM product_order WHERE merchant_id = :merchantId AND settlement_status = 'SETTLED'", nativeQuery = true)
     BigDecimal sumSettledAmountByMerchant(@Param("merchantId") Long merchantId);
+
+    /**
+     * 查询已发货超过指定天数且未结算的待确认订单
+     * @param deadline 发货时间截止点
+     * @return 待自动确认的订单列表
+     */
+    @Query("SELECT o FROM ProductOrder o WHERE o.status = 'WAIT_BUYER_CONFIRM_GOODS' " +
+           "AND o.paidTime IS NOT NULL AND o.paidTime < :deadline " +
+           "AND (o.settlementStatus IS NULL OR o.settlementStatus != 'SETTLED')")
+    List<ProductOrder> findPendingAutoConfirm(@Param("deadline") LocalDateTime deadline);
 }

@@ -2,6 +2,7 @@ package com.example.enterprise.dto;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
@@ -16,8 +17,8 @@ public class MessageSubmitDTO {
     @Size(max = 80, message = "姓名不能超过80个字符")
     private String username;
 
-    /** 留言人电话，最长50个字符 */
-    @Size(max = 50, message = "电话不能超过50个字符")
+    /** 留言人电话，需为有效的手机号 */
+    @Pattern(regexp = "^1[3-9]\\d{9}$", message = "手机号格式不正确")
     private String phone;
 
     /** 留言人邮箱，需符合邮箱格式，最长120个字符 */

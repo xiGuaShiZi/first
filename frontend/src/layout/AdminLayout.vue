@@ -8,14 +8,29 @@
       </div>
       <router-link to="/admin">概览</router-link>
       <router-link to="/admin/news">校园贴士</router-link>
-      <router-link to="/admin/product">闲置物品</router-link>
-      <router-link to="/admin/message">咨询反馈</router-link>
+      <router-link to="/admin/product">
+        闲置物品
+        <span v-if="pendingCounts.productPendingAudit" class="badge badge-red">{{ pendingCounts.productPendingAudit }}</span>
+      </router-link>
+      <router-link to="/admin/message">
+        咨询反馈
+        <span v-if="pendingCounts.pendingMessageTotal" class="badge badge-orange">{{ pendingCounts.pendingMessageTotal }}</span>
+      </router-link>
       <router-link to="/admin/company">平台信息</router-link>
       <router-link to="/admin/banner">Banner</router-link>
       <router-link to="/admin/orders">交易管理</router-link>
-      <router-link to="/admin/returns">交易协商</router-link>
-      <router-link to="/admin/merchants">商家审核</router-link>
-      <router-link to="/admin/customers">客户审核</router-link>
+      <router-link to="/admin/returns">
+        交易协商
+        <span v-if="pendingCounts.returnPendingTotal" class="badge badge-orange">{{ pendingCounts.returnPendingTotal }}</span>
+      </router-link>
+      <router-link to="/admin/merchants">
+        商家审核
+        <span v-if="pendingCounts.merchantPendingTotal" class="badge badge-red">{{ pendingCounts.merchantPendingTotal }}</span>
+      </router-link>
+      <router-link to="/admin/customers">
+        客户审核
+        <span v-if="pendingCounts.customerPendingTotal" class="badge badge-red">{{ pendingCounts.customerPendingTotal }}</span>
+      </router-link>
       <router-link to="/admin/service-fees">服务费管理</router-link>
       <el-button type="text" @click="adjustMerchantLevels" style="color:#409EFF; padding:0; margin-top:8px">手动调整商家等级</el-button>
       <button @click="goToFront">返回前台</button>
@@ -50,7 +65,7 @@
 -->
 
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, provide, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { adminApi, authApi } from '../api/modules'
@@ -60,6 +75,8 @@ const adminName = computed(() => localStorage.getItem('admin_name') || 'admin')
 const passwordDialogVisible = ref(false)
 const saving = ref(false)
 const passwordForm = reactive({ oldPassword: '', newPassword: '', confirmPassword: '' })
+const pendingCounts = ref({})
+let pollTimer = null
 
 const goToFront = () => {
   router.push('/')
@@ -93,6 +110,29 @@ const changePassword = async () => {
   }
 }
 
+const fetchPendingCounts = async () => {
+  try {
+    const res = await adminApi.dashboard()
+    pendingCounts.value = res.data || {}
+  } catch {
+    // 静默失败，下次轮询重试
+  }
+}
+
+provide('refreshPendingCounts', fetchPendingCounts)
+
+onMounted(() => {
+  fetchPendingCounts()
+  pollTimer = setInterval(fetchPendingCounts, 30000)
+})
+
+onUnmounted(() => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+})
+
 const adjustMerchantLevels = async () => {
   try {
     const res = await adminApi.adjustMerchantLevels()
@@ -108,3 +148,26 @@ const adjustMerchantLevels = async () => {
   }
 }
 </script>
+
+<style scoped>
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1;
+  margin-left: 6px;
+}
+.badge-red {
+  background: #F56C6C;
+}
+.badge-orange {
+  background: #E6A23C;
+}
+</style>

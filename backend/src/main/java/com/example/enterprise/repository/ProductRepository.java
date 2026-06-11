@@ -49,4 +49,11 @@ public interface ProductRepository extends JpaRepository<Product, Long>, JpaSpec
             order by p.category
             """)
     List<String> findPublicCategories();
+
+    /** 查询商家的总销量（所有商品的 salesCount 之和） */
+    @Query("SELECT COALESCE(SUM(p.salesCount), 0) FROM Product p WHERE p.publisherId = :merchantId")
+    long sumSalesCountByPublisherId(@Param("merchantId") Long merchantId);
+
+    /** 根据审核状态统计商品数量 */
+    long countByAuditStatus(Integer auditStatus);
 }

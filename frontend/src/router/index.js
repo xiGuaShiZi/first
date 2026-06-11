@@ -24,6 +24,7 @@ const UserLogin = () => import(/* webpackChunkName: "user-login" */ '../views/fr
 const UserOrders = () => import(/* webpackChunkName: "user-orders" */ '../views/front/UserOrders.vue')
 const UserProfile = () => import(/* webpackChunkName: "user-profile" */ '../views/front/UserProfile.vue')
 const BuyerReviews = () => import(/* webpackChunkName: "buyer-reviews" */ '../views/front/BuyerReviews.vue')
+const BargainOffers = () => import(/* webpackChunkName: "bargain-offers" */ '../views/front/BargainOffers.vue')
 const OrderReview = () => import(/* webpackChunkName: "order-review" */ '../views/front/OrderReview.vue')
 const Cart = () => import(/* webpackChunkName: "cart" */ '../views/front/Cart.vue')
 const MyProducts = () => import(/* webpackChunkName: "my-products" */ '../views/front/MyProducts.vue')
@@ -32,6 +33,8 @@ const MerchantShopSettings = () => import(/* webpackChunkName: "merchant-shop-se
 const MerchantWallet = () => import(/* webpackChunkName: "merchant-wallet" */ '../views/merchant/Wallet.vue')
 const MerchantPublishProduct = () => import(/* webpackChunkName: "merchant-publish" */ '../views/merchant/PublishProduct.vue')
 const MerchantOrders = () => import(/* webpackChunkName: "merchant-orders" */ '../views/merchant/Orders.vue')
+const MerchantBuyerReviews = () => import(/* webpackChunkName: "merchant-buyer-reviews" */ '../views/merchant/BuyerReviews.vue')
+const MerchantBargainOffers = () => import(/* webpackChunkName: "merchant-bargain-offers" */ '../views/merchant/BargainOffers.vue')
 const ShopDetail = () => import(/* webpackChunkName: "shop-detail" */ '../views/front/ShopDetail.vue')
 const Login = () => import(/* webpackChunkName: "admin-login" */ '../views/admin/Login.vue')
 const Dashboard = () => import(/* webpackChunkName: "admin-dashboard" */ '../views/admin/Dashboard.vue')
@@ -69,6 +72,7 @@ const router = createRouter({
         { path: 'orders', component: UserOrders, meta: { requiresUser: true } },
         { path: 'profile', component: UserProfile, meta: { requiresUser: true } },
         { path: 'buyer-reviews', component: BuyerReviews, meta: { requiresUser: true } },
+        { path: 'bargain-offers', component: BargainOffers, meta: { requiresUser: true } },
         { path: 'orders/:orderId/review', component: OrderReview, meta: { requiresUser: true } },
         { path: 'merchant-register', component: MerchantRegister },
         { path: 'merchant-login', component: MerchantLogin },
@@ -76,6 +80,8 @@ const router = createRouter({
         { path: 'merchant-shop-settings', component: MerchantShopSettings, meta: { requiresMerchant: true } },
         { path: 'merchant-wallet', component: MerchantWallet, meta: { requiresMerchant: true } },
         { path: 'merchant-orders', component: MerchantOrders, meta: { requiresMerchant: true } },
+        { path: 'merchant-buyer-reviews', component: MerchantBuyerReviews, meta: { requiresMerchant: true } },
+        { path: 'merchant-bargain-offers', component: MerchantBargainOffers, meta: { requiresMerchant: true } },
         { path: 'merchant-publish', component: MerchantPublishProduct, meta: { requiresMerchant: true } },
         { path: 'shop/:merchantId', component: ShopDetail, name: 'ShopDetail' }
       ]
@@ -106,8 +112,8 @@ const router = createRouter({
 
 router.beforeEach((to) => {
   if (to.meta.requiresAuth && !localStorage.getItem('admin_token')) return '/login'
-  if (to.meta.requiresUser && !localStorage.getItem('user_token')) return '/user-login'
-  if (to.meta.requiresMerchant && !localStorage.getItem('merchant_token')) return '/merchant-login'
+  if (to.meta.requiresUser && !localStorage.getItem('user_token')) return '/login'
+  if (to.meta.requiresMerchant && !localStorage.getItem('merchant_token')) return '/login'
 })
 
 export default router
