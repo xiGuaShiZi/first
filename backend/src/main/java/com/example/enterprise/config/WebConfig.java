@@ -1,16 +1,18 @@
 package com.example.enterprise.config;
 
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
-import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 /**
  * Web配置类
- * <p>配置静态资源映射（上传文件目录）和操作日志拦截器</p>
+ * <p>确保上传目录存在，并注册操作日志拦截器</p>
  */
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
@@ -23,15 +25,11 @@ public class WebConfig implements WebMvcConfigurer {
     private OperationLogInterceptor operationLogInterceptor;
 
     /**
-     * 配置静态资源映射，将/uploads/**映射到上传目录
+     * 确保上传目录在应用启动时存在，避免静态资源请求报 NoResourceFoundException
      */
-    @Override
-    public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        String location = Path.of(uploadDir).toAbsolutePath().toUri().toString();
-        if (!location.endsWith("/")) {
-            location += "/";
-        }
-        registry.addResourceHandler("/uploads/**").addResourceLocations(location);
+    @PostConstruct
+    public void ensureUploadDir() throws IOException {
+        Files.createDirectories(Path.of(uploadDir).toAbsolutePath().normalize());
     }
 
     /**

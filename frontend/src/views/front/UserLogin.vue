@@ -15,7 +15,6 @@
       <template v-if="mode === 'register'">
         <el-input v-model="form.phone" placeholder="联系电话" />
         <el-input v-model="form.email" placeholder="邮箱" />
-        <el-input v-model="form.defaultAddress" placeholder="默认地址" />
         <el-select v-model="form.gender" placeholder="性别" style="width: 100%">
           <el-option label="男" value="MALE" />
           <el-option label="女" value="FEMALE" />
@@ -70,7 +69,6 @@ const form = reactive({
   phone: '', 
   email: '', 
   captcha: '', 
-  defaultAddress: '', 
   gender: '', 
   bankAccount: '' 
 })
@@ -92,10 +90,6 @@ const submit = async () => {
   if (mode.value === 'register') {
     if (!form.phone) {
       ElMessage.warning('请输入联系电话')
-      return
-    }
-    if (!form.defaultAddress) {
-      ElMessage.warning('请输入默认地址')
       return
     }
     if (!form.gender) {
@@ -121,7 +115,6 @@ const submit = async () => {
       // 清空注册表单
       form.phone = ''
       form.email = ''
-      form.defaultAddress = ''
       form.gender = ''
       form.bankAccount = ''
       await loadCaptcha()

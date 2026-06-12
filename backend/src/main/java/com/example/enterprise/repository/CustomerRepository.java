@@ -22,6 +22,9 @@ public interface CustomerRepository extends JpaRepository<Customer, Long>, JpaSp
     /** 检查手机号是否已注册 */
     boolean existsByPhone(String phone);
 
+    /** 检查邮箱是否已注册 */
+    boolean existsByEmail(String email);
+
     /** 根据审核状态分页查询客户列表 */
     org.springframework.data.domain.Page<com.example.enterprise.entity.Customer> findByAuditStatus(Integer auditStatus, org.springframework.data.domain.Pageable pageable);
 

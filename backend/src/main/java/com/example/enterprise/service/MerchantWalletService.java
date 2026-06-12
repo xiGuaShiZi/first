@@ -22,6 +22,7 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -157,7 +158,7 @@ public class MerchantWalletService {
      * @param isAutoConfirm 是否自动确认
      * @return 结算后的订单
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public ProductOrder settleOrder(Long orderId, boolean isAutoConfirm) {
         ProductOrder order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new BusinessException("订单不存在"));
@@ -271,7 +272,7 @@ public class MerchantWalletService {
      * <p>买家付款后，货款暂存于系统中间账户，待确认收货后再结算给商家</p>
      * @param orderId 订单ID
      */
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void freezeOrderAmount(Long orderId) {
         ProductOrder order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new BusinessException("订单不存在"));

@@ -6,8 +6,6 @@ logging:
   level:
     # RepositoryConfigurationExtensionSupport 在启动时扫描所有 JPA 仓库判定 Redis 归属，产生大量冗余 INFO 日志
     org.springframework.data.repository.config.RepositoryConfigurationExtensionSupport: WARN
-    # ResourceHandlerUtils 的尾部斜杠追加提示为内部行为，降级为 ERROR 不显示
-    org.springframework.web.servlet.resource.ResourceHandlerUtils: ERROR
 
 spring:
   application:

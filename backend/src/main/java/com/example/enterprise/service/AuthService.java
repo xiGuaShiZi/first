@@ -172,6 +172,9 @@ public class AuthService {
         if (customerRepository.existsByPhone(dto.getPhone())) {
             throw new BusinessException("手机号已注册");
         }
+        if (customerRepository.existsByEmail(dto.getEmail())) {
+            throw new BusinessException("邮箱已注册");
+        }
         Customer customer = new Customer();
         customer.setUsername(username);
         customer.setPassword(passwordEncoder.encode(dto.getPassword()));
@@ -188,21 +191,6 @@ public class AuthService {
         
         // 注册后清除客户缓存
         cacheService.evictCustomer(savedCustomer.getId());
-        
-        // 注册时创建默认地址记录
-        CustomerAddress defaultAddress = new CustomerAddress();
-        defaultAddress.setCustomerId(savedCustomer.getId());
-        defaultAddress.setReceiverName(username);
-        defaultAddress.setPhone(dto.getPhone());
-        defaultAddress.setProvince("");
-        defaultAddress.setCity(dto.getCity());
-        defaultAddress.setDistrict("");
-        defaultAddress.setDetailAddress("");
-        defaultAddress.setIsDefault(1);
-        defaultAddress.setCreateTime(LocalDateTime.now());
-        defaultAddress.setUpdateTime(LocalDateTime.now());
-        customerAddressRepository.save(defaultAddress);
-        
         return savedCustomer;
     }
 

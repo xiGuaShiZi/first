@@ -31,8 +31,7 @@ public class CustomerRegisterDTO {
     @Size(max = 120, message = "邮箱不能超过120个字符")
     private String email;
 
-    /** 城市，必填字段 */
-    @NotBlank(message = "城市不能为空")
+    /** 城市 */
     @Size(max = 50, message = "城市不能超过50个字符")
     private String city;
 
